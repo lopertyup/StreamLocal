@@ -49,5 +49,8 @@ Thumbs.db
 .claude/
 AGENTS.md
 
+# Local maintainer scripts, not shipped to downloaded users
+push_prod.bat
+
 # Manual scratch files
 test.md
