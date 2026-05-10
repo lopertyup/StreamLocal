@@ -9,7 +9,7 @@ Le dépôt public est pensé pour les utilisateurs. Il contient le script de
 création de l'exécutable, mais pas les scripts de maintenance utilisés pour
 pousser les mises à jour.
 
-Version actuelle : `0.6.6` - V6 finalisée le 10/05/2026.
+Version actuelle : `0.6.6` - V6 finalisée le 10/05/2026, avec Scan-Manga.
 
 ## Installation Rapide
 
@@ -136,14 +136,20 @@ du lecteur dans le fichier pour éviter les collisions.
 - Téléchargements HLS corrigés pour les playlists et segments obfusqués.
 - GoldenAnime/AllAnime charge les sources plus vite et résout les liens chiffrés.
 - GoldenMS/VidEasy peut télécharger les flux qui restaient bloqués à 0%.
+- Scan-Manga est disponible dans le lecteur `Manga`, avec chargement des pages
+  via le proxy local quand les images refusent le chargement direct.
 - Les téléchargements manuels depuis plusieurs lecteurs ne s'écrasent plus.
 - Le double-clic sur la vidéo bascule correctement le plein écran une seule fois.
 
 ## Manga Et Scans
 
 L'onglet `Manga` utilise le lecteur scans unique de l'application. Il regroupe
-les providers manga/scans disponibles, notamment Anime-Sama et Lelscans quand
-ils répondent.
+les providers manga/scans disponibles, notamment Anime-Sama, Lelscans et
+Scan-Manga quand ils répondent.
+
+Certains chapitres Scan-Manga peuvent être temporairement indisponibles si le
+site impose une vérification Cloudflare ou si le chapitre est payant. Dans ce
+cas, l'application affiche une erreur lisible au lieu de bloquer le lecteur.
 
 En plein écran, le lecteur scans permet :
 

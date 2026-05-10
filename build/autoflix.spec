@@ -67,6 +67,8 @@ hiddenimports = [
     "autoflix_cli.scraping.player",
     "autoflix_cli.scraping.manga",
     "autoflix_cli.scraping.lelscans",
+    "autoflix_cli.scraping.scan_manga",
+    "autoflix_cli.scraping.scan_manga_image_picker",
     "autoflix_cli.scraping.subtitles",
     "autoflix_cli.scraping.deobfuscate",
     "webview",

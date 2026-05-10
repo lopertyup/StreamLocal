@@ -41,6 +41,9 @@ Telechargements/
 tmp*/
 temp/
 desktop-runtime.json
+data/scan_manga_chapter_pages_cache.json
+data/scan_manga_chapter_pages_cache.json.tmp
+data/scan_manga_image_locations.json
 
 # Editors and OS files
 .vscode/

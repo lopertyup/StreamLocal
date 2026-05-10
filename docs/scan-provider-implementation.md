@@ -12,6 +12,10 @@ Objectif: ajouter un provider de scans qui fonctionne dans l'app desktop, comme 
   Contient le contrat provider (`ScanProvider`), les modeles (`ScanSummary`, `ScanDetails`, `ScanChapter`, `ScanPage`) et le registre `ScanService`.
 - `src/autoflix_cli/scraping/manga.py`
   Scraper historique Anime-Sama. S'en servir comme reference de style, mais ne pas y empiler les autres sites.
+- `src/autoflix_cli/scraping/scan_manga.py`
+  Exemple de provider difficile: Cloudflare, API de recherche separee, donnees lecteur cachees dans le HTML, proxy image et cache local de pages.
+- `src/autoflix_cli/scraping/scan_manga_image_picker.py`
+  Outil d'enquete local pour inspecter les images candidates quand le HTML ne montre pas clairement les pages du chapitre.
 - `src/autoflix_cli/app/server.py`
   Expose les routes `/api/scans/...` consommees par l'interface.
 - `src/autoflix_cli/app/static/app.js`
@@ -37,6 +41,12 @@ Important: les nouveaux sites doivent passer par `/api/scans` et `ScanService`. 
   - les headers/referers necessaires pour charger les pages et images.
 - Utiliser `curl_cffi.requests.Session(impersonate="chrome", curl_options=DNS_OPTIONS)` si le site bloque `requests`.
 - Toujours utiliser `urljoin` pour normaliser les liens relatifs.
+- Inspecter aussi les appels XHR/fetch et scripts inline: certains sites n'exposent pas les images dans des `<img>` utiles.
+- Identifier les protections separement:
+  - challenge Cloudflare ou blocage anti-bot;
+  - hotlink/CORS sur les images;
+  - chapitres payants ou premium;
+  - images decoratives qui ressemblent a des pages mais ne sont que logos/covers.
 
 2. Creer un scraper dedie
 
@@ -112,6 +122,23 @@ def get_pages(chapter_url: str) -> List[str]:
 ```
 
 Garder le scraper pur: il retourne des objets simples ou des URLs, sans connaitre Flask ni l'UI.
+
+Pour un site complexe, isoler les mecanismes specifiques dans le scraper au lieu de les placer dans le provider:
+
+- une fonction de detection de protection, par exemple `_raise_for_cloudflare(response)`;
+- des exceptions dediees (`<Site>CloudflareError`, `<Site>PaidContentError`) mappees ensuite en `ProviderError`;
+- une fonction de validation stricte des URLs autorisees avant tout proxy;
+- des decodeurs nommes pour les payloads inline/API au lieu de manipuler des chaines dans `get_pages`;
+- des retries limites avec de nouvelles sessions `curl_cffi`/profils `impersonate` quand le blocage depend de la session;
+- un cache local uniquement pour les donnees reconstructibles, jamais pour des secrets ou donnees utilisateur.
+
+Exemple Scan-Manga:
+
+- la recherche passe par `https://bqj.scan-manga.com/search/quick.json` avec headers d'API (`Origin`, `Referer`, `Sec-Fetch-*`);
+- les chapitres viennent du HTML public, en filtrant les liens/nodes premium;
+- les pages de chapitre sont cachees dans un payload lecteur: le HTML contient les tokens, l'API `/lel/<id>.json` renvoie un payload compresse/encode, puis les URLs sont reconstruites avec `dN`/`dC`, `s`, `v`, `c` et `p`;
+- l'extraction DOM d'images reste un fallback, pas la source principale, car les logos/covers peuvent polluer le resultat;
+- les erreurs Cloudflare sont detectees par headers (`cf-mitigated`, `cf-ray`, `server`) et marqueurs HTML (`/cdn-cgi/challenge-platform`, `cf-chl`, etc.).
 
 3. Ajouter l'adapter provider
 
@@ -212,7 +239,7 @@ providers if providers is not None else {
 
 Si le provider supporte une autre langue que `fr` ou `en`, mettre a jour `SUPPORTED_SCAN_LANGUAGES`.
 
-5. Gerer les images protegees
+5. Gerer Cloudflare, le hotlink et les images cachees
 
 Par defaut, `ScanPage.url` est chargee directement par le navigateur.
 
@@ -225,6 +252,30 @@ Si le site refuse le hotlink, CORS, ou impose un `Referer`, ne pas laisser l'UI 
 
 Anime-Sama fait cela via `/api/manga/image`; pour un nouveau provider, preferer une route scan/provider plutot que reutiliser `/api/manga/image`.
 
+Pour un site du niveau de Scan-Manga, appliquer aussi ces regles:
+
+- ne jamais supposer que les premieres images du HTML sont les pages: tester les selectors lecteur, puis l'API lecteur/cachee, puis seulement un fallback DOM;
+- conserver les headers navigateur importants (`Origin`, `Referer`, `Accept`, `Accept-Language`, `Sec-Fetch-*`) pour les pages, APIs et images;
+- streamer l'image depuis Flask (`stream_with_context`) et propager `Content-Type`, `Content-Length` si disponible, et un `Cache-Control` raisonnable;
+- transformer les erreurs attendues en messages lisibles: Cloudflare temporaire, chapitre payant, pages indisponibles;
+- si Cloudflare bloque seulement une session de lecture, retenter avec une session neuve et des profils `impersonate` limites, puis utiliser le cache local de pages si une version valide existe;
+- refuser tout proxy d'URL hors domaine autorise via `urlparse` (`host == domaine` ou sous-domaine attendu).
+
+Quand les images sont cachees dans le HTML ou un payload obfusque, creer un outil d'enquete plutot que multiplier les essais a la main. Le modele Scan-Manga:
+
+```powershell
+python -m autoflix_cli.scraping.scan_manga_image_picker "https://www.scan-manga.com/lecture-en-ligne/..."
+```
+
+L'outil local:
+
+- lance une petite app Flask sur `127.0.0.1`;
+- collecte les candidats depuis `meta`, `img`, `source`, regex HTML et l'API lecteur si disponible;
+- proxifie les images pour les afficher malgre les headers/referers;
+- enregistre les selections dans `data/scan_manga_image_locations.json`.
+
+Ces fichiers de sortie et les caches comme `data/scan_manga_chapter_pages_cache.json` sont du scratch local: les ignorer dans Git sauf decision explicite de versionner un fixture de test.
+
 6. Tests A Ajouter
 
 Ajouter au minimum un test provider sans reseau reel:
@@ -234,6 +285,10 @@ Ajouter au minimum un test provider sans reseau reel:
 - verifier `get_details`;
 - verifier `get_pages`;
 - verifier une route Flask si une route image proxy est ajoutee.
+- verifier le mapping des erreurs attendues (`Cloudflare`, contenu payant, URL refusee);
+- verifier que les images decoratives ne sont pas prises pour des pages;
+- verifier la reconstruction des URLs depuis un payload lecteur decode;
+- verifier les retries/cache si le provider les utilise.
 
 S'inspirer de:
 
@@ -271,5 +326,8 @@ build\build.bat
 - Les pages chargent dans le lecteur.
 - La progression fonctionne en mode vertical et page.
 - Les erreurs reseau deviennent des `ProviderError` lisibles quand possible.
+- Les blocages Cloudflare et chapitres payants ont un code d'erreur dedie.
+- Les images protegees passent par un proxy qui valide le domaine.
+- Les fichiers d'enquete/cache generes localement ne partent pas dans le commit.
 - `python -m pytest` passe.
 - Le `.exe` embarque le module dans `build/autoflix.spec`.

@@ -16,6 +16,7 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.serving import make_server
 
 from ..scraping import manga as manga_scraper
+from ..scraping import scan_manga as scan_manga_scraper
 from . import autostart, diagnostics
 from .downloads import DownloadManager, find_ffmpeg
 from .models import ProviderError
@@ -303,6 +304,44 @@ def create_app(
             quality=quality,
         )
         return jsonify({"pages": [page.to_dict() for page in pages]})
+
+    @app.route("/api/scans/scan_manga/images/proxy")
+    def scan_manga_image():
+        url = request.args.get("url")
+        if not url:
+            return _json_error("URL image Scan-Manga manquante.", "missing_scan_manga_image", 422)
+        try:
+            upstream = scan_manga_scraper.fetch_image(url)
+        except ValueError as exc:
+            return _json_error(str(exc), "invalid_scan_manga_image", 422)
+        except scan_manga_scraper.ScanMangaCloudflareError:
+            return _json_error(
+                "Image Scan-Manga bloquee par Cloudflare.",
+                "scan_manga_image_cloudflare",
+                502,
+            )
+        if upstream.status_code >= 400:
+            return _json_error("Image Scan-Manga indisponible.", "scan_manga_image_unavailable", upstream.status_code)
+
+        content_type = upstream.headers.get("Content-Type") or upstream.headers.get("content-type") or "image/jpeg"
+        response_headers = {
+            "Content-Type": content_type,
+            "Cache-Control": "public, max-age=86400",
+        }
+        content_length = upstream.headers.get("Content-Length") or upstream.headers.get("content-length")
+        if content_length:
+            response_headers["Content-Length"] = content_length
+
+        def generate():
+            for chunk in upstream.iter_content(chunk_size=16384):
+                if chunk:
+                    yield chunk
+
+        return Response(
+            stream_with_context(generate()),
+            status=upstream.status_code,
+            headers=response_headers,
+        )
 
     @app.route("/api/scans/progress", methods=["POST"])
     def save_scan_progress():

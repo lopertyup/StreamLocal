@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol, TypeVar
+from urllib.parse import quote, urlparse
 
 from ..scraping import lelscans as lelscans_scraper
 from ..scraping import manga as manga_scraper
+from ..scraping import scan_manga as scan_manga_scraper
 from . import diagnostics
 from .encoding import decode_payload, encode_payload
 from .models import ProviderError
@@ -313,6 +316,132 @@ class LelScansProvider:
         ]
 
 
+def _scan_manga_image_url(url: str) -> str:
+    return f"/api/scans/scan_manga/images/proxy?url={quote(url, safe='')}"
+
+
+def _scan_manga_filename(index: int, url: str) -> str:
+    suffix = urlparse(url).path.rsplit(".", 1)
+    extension = "." + suffix[-1].lower() if len(suffix) == 2 and suffix[-1] else ".jpg"
+    if not re.match(r"^\.[a-z0-9]{2,5}$", extension):
+        extension = ".jpg"
+    return f"{index + 1}{extension}"
+
+
+class ScanMangaProvider:
+    info = ScanProviderInfo(
+        id="scan_manga",
+        name="Scan-Manga",
+        label="Scan-Manga",
+        languages=["fr"],
+    )
+
+    def search(self, query: str, language: str = "fr") -> List[ScanSummary]:
+        del language
+        summaries: List[ScanSummary] = []
+        for item in self._call(lambda: scan_manga_scraper.search_manga(query)):
+            content_id = encode_payload(
+                {
+                    "detail_url": item.detail_url,
+                    "title": item.title,
+                    "cover_url": item.cover_url,
+                }
+            )
+            summaries.append(
+                ScanSummary(
+                    provider_id=self.info.id,
+                    provider_name=self.info.name,
+                    content_id=content_id,
+                    title=item.title,
+                    image=item.cover_url,
+                    subtitle=item.latest_chapter and f"Dernier chapitre {item.latest_chapter}" or "Scans FR",
+                    genres=list(item.genres),
+                    languages=["fr"],
+                    status=item.status,
+                )
+            )
+        return summaries
+
+    def get_details(self, content_id: str, language: str = "fr") -> ScanDetails:
+        del language
+        payload = decode_payload(content_id)
+        info = self._call(lambda: scan_manga_scraper.get_manga_info(payload["detail_url"]))
+        chapters = [
+            ScanChapter(
+                id=encode_payload(
+                    {
+                        "chapter_url": chapter.url,
+                        "chapter": chapter.chapter,
+                        "title": chapter.title,
+                    }
+                ),
+                title=chapter.title,
+                chapter=chapter.chapter,
+                language="fr",
+                pages=chapter.pages,
+            )
+            for chapter in self._call(lambda: scan_manga_scraper.get_chapters(info.detail_url))
+        ]
+        return ScanDetails(
+            provider_id=self.info.id,
+            provider_name=self.info.name,
+            content_id=content_id,
+            title=info.title,
+            image=info.cover_url or payload.get("cover_url", ""),
+            description=info.description,
+            genres=list(info.genres),
+            languages=["fr"],
+            status=info.status,
+            chapters=chapters,
+        )
+
+    def get_chapters(self, content_id: str, language: str = "fr") -> List[ScanChapter]:
+        return self.get_details(content_id, language).chapters
+
+    def get_pages(
+        self,
+        content_id: str,
+        chapter_id: str,
+        quality: str = "data",
+    ) -> List[ScanPage]:
+        del content_id, quality
+        payload = decode_payload(chapter_id)
+        pages = self._call(lambda: scan_manga_scraper.get_pages(payload["chapter_url"]))
+        if not pages:
+            raise ProviderError("chapter_pages_unavailable", "Pages du chapitre indisponibles.", 502)
+        return [
+            ScanPage(
+                index=index,
+                url=_scan_manga_image_url(url),
+                filename=_scan_manga_filename(index, url),
+                quality="image",
+            )
+            for index, url in enumerate(pages)
+        ]
+
+    def _call(self, callback: Callable[[], T]) -> T:
+        try:
+            return callback()
+        except scan_manga_scraper.ScanMangaCloudflareError as exc:
+            raise ProviderError(
+                "scan_manga_cloudflare",
+                "Scan-Manga est actuellement bloque par Cloudflare. Reessaie plus tard.",
+                502,
+            ) from exc
+        except scan_manga_scraper.ScanMangaPaidContentError as exc:
+            raise ProviderError(
+                "scan_manga_paid_chapter",
+                "Ce chapitre Scan-Manga est payant et n'est pas affiche.",
+                403,
+            ) from exc
+        except Exception as exc:
+            raise ProviderError(
+                "scan_manga_unavailable",
+                "Scan-Manga n'a pas renvoye de donnees lisibles.",
+                502,
+            ) from exc
+
+
 def _clean_language(language: Optional[str]) -> str:
     language = (language or "fr").strip().lower()
     if language not in SUPPORTED_SCAN_LANGUAGES:
@@ -339,6 +468,7 @@ class ScanService:
             else {
                 "anime_sama": AnimeSamaMangaProvider(),
                 "lelscans": LelScansProvider(),
+                "scan_manga": ScanMangaProvider(),
             }
         )
         self.last_search_errors: List[str] = []
