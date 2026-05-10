@@ -855,8 +855,10 @@ function renderScanReader() {
   const pageCount = reader.pages.length;
   const pageIndex = Math.max(0, Math.min(reader.pageIndex || 0, Math.max(0, pageCount - 1)));
   reader.pageIndex = pageIndex;
-  reader.zoom = clamp(Number(reader.zoom) || SCAN_READER_MIN_ZOOM, SCAN_READER_MIN_ZOOM, SCAN_READER_MAX_ZOOM);
   const isSingle = reader.mode === "single";
+  reader.zoom = isSingle
+    ? clamp(Number(reader.zoom) || SCAN_READER_MIN_ZOOM, SCAN_READER_MIN_ZOOM, SCAN_READER_MAX_ZOOM)
+    : SCAN_READER_MIN_ZOOM;
   const chapterIndex = currentScanChapterIndex();
   const chapterCount = readableScanChapters().length;
   syncAppFullscreenClasses();
@@ -967,6 +969,14 @@ function applyScanZoom() {
   stage.classList.toggle("scan-reader-zoomed", zoom > SCAN_READER_MIN_ZOOM);
 }
 
+function scanReaderCanPan() {
+  const reader = state.scanReader;
+  if (!reader) return false;
+  if (reader.mode === "single") return true;
+  const zoom = Number(reader.zoom) || SCAN_READER_MIN_ZOOM;
+  return zoom > SCAN_READER_MIN_ZOOM + 0.001;
+}
+
 function setScanZoom(nextZoom, originEvent = null) {
   const reader = state.scanReader;
   const stage = scanFullscreenStage();
@@ -991,10 +1001,12 @@ function setScanZoom(nextZoom, originEvent = null) {
 
 function handleScanReaderWheel(event) {
   const stage = scanStageFromEvent(event);
-  if (!stage || !state.scanReader || !scanFullscreenActive()) return;
+  const reader = state.scanReader;
+  if (!stage || !reader || !scanFullscreenActive()) return;
+  if (reader.mode !== "single") return;
   event.preventDefault();
   const direction = event.deltaY < 0 ? 1 : -1;
-  const currentZoom = Number(state.scanReader.zoom) || SCAN_READER_MIN_ZOOM;
+  const currentZoom = Number(reader.zoom) || SCAN_READER_MIN_ZOOM;
   setScanZoom(currentZoom + direction * SCAN_READER_ZOOM_STEP, event);
 }
 
@@ -1002,6 +1014,7 @@ function handleScanPanStart(event) {
   if (event.button !== 0 || !state.scanReader) return;
   const stage = scanStageFromEvent(event);
   if (!stage || !scanFullscreenActive()) return;
+  if (!scanReaderCanPan()) return;
   state.scanPan = {
     pointerId: event.pointerId,
     stage,
@@ -1090,6 +1103,9 @@ async function saveScanProgress(completed = false) {
 
 function setScanReaderMode(mode) {
   if (!state.scanReader) return;
+  if (state.scanReader.mode !== mode) {
+    state.scanReader.zoom = SCAN_READER_MIN_ZOOM;
+  }
   state.scanReader.mode = mode;
   renderScanReader();
   saveScanProgress(false).catch(() => {});
@@ -1098,7 +1114,11 @@ function setScanReaderMode(mode) {
 function moveScanPage(delta) {
   const reader = state.scanReader;
   if (!reader) return;
+  const wasSingle = reader.mode === "single";
   reader.mode = "single";
+  if (!wasSingle) {
+    reader.zoom = SCAN_READER_MIN_ZOOM;
+  }
   reader.pageIndex = Math.max(0, Math.min((reader.pageIndex || 0) + delta, Math.max(0, reader.pages.length - 1)));
   renderScanReader();
   saveScanProgress(false).catch(() => {});

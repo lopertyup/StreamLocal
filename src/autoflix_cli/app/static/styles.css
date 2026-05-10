@@ -435,6 +435,11 @@ body.app-scan-fullscreen .scan-reader-stage {
   touch-action: none;
 }
 
+body.app-scan-vertical-fullscreen .scan-reader-stage {
+  cursor: auto;
+  touch-action: pan-y;
+}
+
 body.app-scan-single-fullscreen .scan-reader-stage {
   overflow: auto;
   cursor: pointer;
