@@ -20,7 +20,7 @@ from . import diagnostics
 from .encoding import decode_payload
 from .models import ProviderError
 from .playback import prepare_playback
-from .store import APP_ID, DesktopStore
+from .store import DesktopStore, _default_download_dir
 
 
 _INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -28,6 +28,7 @@ _TIME_RE = re.compile(r"out_time_ms=(\d+)")
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)")
 _PROGRESS_TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
 _SIZE_RE = re.compile(r"total_size=(\d+)")
+HLS_ALLOWED_SEGMENT_EXTENSIONS = "ALL"
 
 
 def sanitize_filename(value: str, fallback: str = "AutoFlix") -> str:
@@ -40,7 +41,25 @@ def sanitize_filename(value: str, fallback: str = "AutoFlix") -> str:
     return cleaned[:120] or fallback
 
 
-def make_dedup_key(progress: Dict[str, Any]) -> str:
+def _source_dedup_identity(payload: Optional[Dict[str, Any]]) -> str:
+    if not payload:
+        return ""
+    parts = [
+        payload.get("source_name") or "",
+        payload.get("source_type") or "",
+        payload.get("quality") or "",
+    ]
+    url = str(payload.get("url") or "")
+    if url:
+        parsed = urllib.parse.urlparse(url)
+        parts.append(f"{parsed.netloc}{parsed.path}" if parsed.netloc else url[:120])
+    return "|".join(str(part) for part in parts if str(part or "").strip())
+
+
+def make_dedup_key(
+    progress: Dict[str, Any],
+    source_payload: Optional[Dict[str, Any]] = None,
+) -> str:
     parts = [
         progress.get("provider_id") or progress.get("provider") or "",
         progress.get("content_id") or "",
@@ -49,6 +68,9 @@ def make_dedup_key(progress: Dict[str, Any]) -> str:
         str(progress.get("episode_number") or ""),
         str(progress.get("anilist_id") or ""),
     ]
+    source_identity = _source_dedup_identity(source_payload)
+    if source_identity:
+        parts.append(source_identity)
     return "|".join(parts)
 
 
@@ -67,7 +89,12 @@ def find_ffmpeg() -> Optional[str]:
     return None
 
 
-def build_output_path(base_dir: Path, progress: Dict[str, Any], extension: str = "mp4") -> Path:
+def build_output_path(
+    base_dir: Path,
+    progress: Dict[str, Any],
+    extension: str = "mp4",
+    source_name: str = "",
+) -> Path:
     provider = sanitize_filename(progress.get("provider") or progress.get("provider_id") or "Unknown", "Unknown")
     series = sanitize_filename(progress.get("series_title") or "AutoFlix", "AutoFlix")
     season = sanitize_filename(progress.get("season_title") or "", "")
@@ -78,6 +105,8 @@ def build_output_path(base_dir: Path, progress: Dict[str, Any], extension: str =
         parts.append(f"E{int(episode_number):02d}")
     if episode_title:
         parts.append(sanitize_filename(episode_title, ""))
+    if source_name:
+        parts.append(sanitize_filename(source_name, ""))
     if not parts:
         parts.append(f"AutoFlix_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     filename = " - ".join([part for part in parts if part]) + f".{extension}"
@@ -154,6 +183,86 @@ def resolve_best_hls_variant(proxy_stream_url: str) -> str:
     except Exception as exc:
         diagnostics.warning("DOWNLOAD", "hls_variant_failed", error=str(exc))
         return proxy_stream_url
+
+
+def build_ffmpeg_command(
+    ffmpeg_path: str,
+    media_kind: str,
+    stream_url: str,
+    output_path: Path,
+    headers: Optional[Dict[str, str]] = None,
+) -> list[str]:
+    cmd = [
+        ffmpeg_path,
+        "-y",
+        "-loglevel", "info",
+        "-stats",
+    ]
+    header_arg = ffmpeg_headers_arg(headers or {})
+    if media_kind == "hls":
+        cmd += [
+            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+            "-allowed_extensions", "ALL",
+            # Some HLS providers disguise media segments behind non-media
+            # suffixes such as .woff2; the local proxy still controls the URL.
+            "-allowed_segment_extensions", HLS_ALLOWED_SEGMENT_EXTENSIONS,
+            "-extension_picky", "0",
+        ]
+        if header_arg:
+            cmd += ["-headers", header_arg]
+        cmd += [
+            "-i", stream_url,
+            "-map", "0:v?",
+            "-map", "0:a?",
+            "-c", "copy",
+            "-bsf:a", "aac_adtstoasc",
+        ]
+    else:
+        if header_arg:
+            cmd += ["-headers", header_arg]
+        cmd += [
+            "-i", stream_url,
+            "-map", "0",
+            "-c", "copy",
+            "-movflags", "+faststart",
+        ]
+    cmd.append(str(output_path))
+    return cmd
+
+
+def ffmpeg_headers_arg(headers: Dict[str, str]) -> str:
+    lines = []
+    for key, value in (headers or {}).items():
+        header = str(key or "").strip()
+        if not header or value is None:
+            continue
+        safe_value = str(value).replace("\r", " ").replace("\n", " ").strip()
+        lines.append(f"{header}: {safe_value}")
+    return "\r\n".join(lines) + ("\r\n" if lines else "")
+
+
+def download_stream_from_playback(
+    playback: Dict[str, Any],
+    source_payload: Dict[str, Any],
+) -> tuple[str, str, Dict[str, str]]:
+    stream_url = playback.get("stream_url") or ""
+    media_kind = playback.get("media_kind") or "hls"
+    headers: Dict[str, str] = {}
+
+    stream_context = (
+        str(source_payload.get("stream_context") or source_payload.get("context") or "")
+        .strip()
+        .lower()
+    )
+    passthrough_url = playback.get("passthrough_stream_url") or ""
+    if media_kind == "hls" and stream_context == "videasy" and passthrough_url:
+        # The local proxy is still used for integrated playback, but ffmpeg can
+        # download Videasy HLS more reliably by reading the upstream playlist
+        # directly with the provider headers.
+        stream_url = passthrough_url
+        headers = dict(source_payload.get("headers") or {})
+
+    return stream_url, media_kind, headers
 
 
 def parse_ffmpeg_progress(line: str, total_seconds: Optional[float]) -> Optional[Dict[str, Any]]:
@@ -281,7 +390,8 @@ class DownloadManager:
             raise ProviderError("invalid_source", f"Source invalide: {exc}", 422) from exc
 
         progress = payload.get("progress") or {}
-        dedup_key = make_dedup_key(progress)
+        source_name = payload.get("source_name") or ""
+        dedup_key = make_dedup_key(progress, None if auto else payload)
         existing = self.store.find_download_by_dedup(dedup_key)
         if existing and existing.get("state") in ("queued", "resolving", "downloading", "done"):
             diagnostics.info(
@@ -294,8 +404,8 @@ class DownloadManager:
             return existing
 
         prefs = self.store.get_preferences()
-        base_dir = Path(prefs.get("download_path") or _default_dir())
-        output_path = build_output_path(base_dir, progress)
+        base_dir = Path(prefs.get("download_path") or _default_download_dir())
+        output_path = build_output_path(base_dir, progress, source_name="" if auto else source_name)
         title_parts = [
             progress.get("series_title"),
             progress.get("season_title"),
@@ -311,7 +421,7 @@ class DownloadManager:
             title=title,
             provider=progress.get("provider", ""),
             quality=payload.get("quality") or "",
-            source_name=payload.get("source_name") or "",
+            source_name=source_name,
             dedup_key=dedup_key,
             anilist_id=anilist_id or progress.get("anilist_id"),
             auto=auto,
@@ -337,7 +447,7 @@ class DownloadManager:
             job = self._jobs.get(job_id)
             if not job:
                 record = self.store.get_download(job_id)
-                if record and record.get("state") in ("queued",):
+                if record and record.get("state") in ("queued", "resolving", "downloading"):
                     self.store.update_download(job_id, {"state": "cancelled"})
                     return True
                 return False
@@ -387,15 +497,32 @@ class DownloadManager:
             self.store.update_download(job.id, {"state": "failed", "error": f"resolve: {exc}"})
             return
 
+        try:
+            source_payload = decode_payload(job.source_id)
+        except Exception:
+            source_payload = {}
+
         if job.cancel_requested:
             self.store.update_download(job.id, {"state": "cancelled"})
             return
 
-        stream_url = playback.get("stream_url")
-        media_kind = playback.get("media_kind") or "hls"
+        stream_url, media_kind, ffmpeg_headers = download_stream_from_playback(
+            playback,
+            source_payload,
+        )
         if not stream_url:
             self.store.update_download(job.id, {"state": "failed", "error": "stream_url manquant"})
             return
+
+        if ffmpeg_headers:
+            diagnostics.info(
+                "DOWNLOAD",
+                "direct_hls",
+                status="selected",
+                job_id=job.id[:8],
+                context=source_payload.get("stream_context") or source_payload.get("context") or "",
+                upstream_domain=diagnostics.domain_of(stream_url),
+            )
 
         if media_kind == "hls":
             stream_url = resolve_best_hls_variant(stream_url)
@@ -406,31 +533,13 @@ class DownloadManager:
             self.store.update_download(job.id, {"state": "failed", "error": "ffmpeg introuvable"})
             return
 
-        cmd = [
+        cmd = build_ffmpeg_command(
             ffmpeg_path,
-            "-y",
-            "-loglevel", "info",
-            "-stats",
-        ]
-        if media_kind == "hls":
-            cmd += [
-                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-                "-allowed_extensions", "ALL",
-                "-allowed_segment_extensions", "ts,m4s,mp4,aac,m4a",
-                "-i", stream_url,
-                "-map", "0:v?",
-                "-map", "0:a?",
-                "-c", "copy",
-                "-bsf:a", "aac_adtstoasc",
-            ]
-        else:
-            cmd += [
-                "-i", stream_url,
-                "-map", "0",
-                "-c", "copy",
-                "-movflags", "+faststart",
-            ]
-        cmd.append(str(job.output_path))
+            media_kind,
+            stream_url,
+            job.output_path,
+            headers=ffmpeg_headers,
+        )
         diagnostics.info(
             "DOWNLOAD",
             "ffmpeg_start",
@@ -554,8 +663,3 @@ class DownloadManager:
             )
         except Exception:
             pass
-
-
-def _default_dir() -> str:
-    home = Path.home()
-    return str(home / "Videos" / APP_ID)

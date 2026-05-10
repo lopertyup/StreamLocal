@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -13,15 +15,53 @@ from .encoding import make_content_key
 APP_NAME = "AutoFlix"
 APP_ID = "AutoFlix"
 APP_AUTHOR = "PaulExplorer"
+DOWNLOAD_DIRNAME = "Téléchargements"
+ACTIVE_DOWNLOAD_STATES = {"queued", "resolving", "downloading"}
+FINISHED_DOWNLOAD_STATES = {"done", "cancelled", "failed"}
 
 
 def _default_download_dir() -> str:
+    return str(_app_root_dir() / DOWNLOAD_DIRNAME)
+
+
+def _app_root_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        executable = Path(sys.executable).resolve()
+        if executable.parent.name.lower() == "dist":
+            return executable.parent.parent
+        return executable.parent
+
+    cwd = Path.cwd().resolve()
+    if (cwd / "pyproject.toml").is_file() or (cwd / "src" / "autoflix_cli").is_dir():
+        return cwd
+    return Path(__file__).resolve().parents[3]
+
+
+def _normalized_path(value: Any) -> str:
+    return os.path.normcase(os.path.abspath(os.path.expanduser(str(value))))
+
+
+def _is_legacy_default_download_dir(value: Any) -> bool:
+    if not value:
+        return False
     home = Path.home()
-    candidates = [home / "Videos", home / "Movies", home / "Vidéos"]
-    for candidate in candidates:
-        if candidate.exists():
-            return str(candidate / APP_ID)
-    return str(home / "Videos" / APP_ID)
+    legacy_dirs = {
+        home / "Videos" / "AutoFlix",
+        home / "Videos" / ("AutoFlix" + "Dev"),
+    }
+    current = _normalized_path(value)
+    return any(current == _normalized_path(path) for path in legacy_dirs)
+
+
+def _delete_download_output_file(job: Dict[str, Any]) -> bool:
+    output_path = job.get("output_path")
+    if not output_path:
+        return False
+    path = Path(output_path)
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
 
 
 def _mapping_media_id(value: Any) -> Optional[int]:
@@ -124,7 +164,10 @@ class DesktopStore:
         preferences = self.data.setdefault("preferences", {})
         preferences.setdefault("language", tracker.get_language() or "fr")
         preferences.setdefault("player", "integrated")
-        preferences.setdefault("download_path", _default_download_dir())
+        default_download_dir = _default_download_dir()
+        current_download_dir = preferences.get("download_path")
+        if not current_download_dir or _is_legacy_default_download_dir(current_download_dir):
+            preferences["download_path"] = default_download_dir
         preferences.setdefault("download_quality", "max")
         preferences.setdefault("check_interval_minutes", 30)
         preferences.setdefault("notifications_enabled", True)
@@ -579,17 +622,61 @@ class DesktopStore:
                 return True
         return False
 
+    def delete_download_with_file(self, job_id: str) -> Dict[str, Any]:
+        with self._lock:
+            jobs = self.data.setdefault("downloads", {})
+            job = jobs.get(job_id)
+            if not job:
+                return {"ok": False, "missing": True, "file_deleted": False}
+            if job.get("state") in ACTIVE_DOWNLOAD_STATES:
+                return {"ok": False, "active": True, "file_deleted": False}
+
+            file_deleted = _delete_download_output_file(job)
+            jobs.pop(job_id, None)
+            self._save()
+            return {"ok": True, "file_deleted": file_deleted}
+
     def clear_finished_downloads(self) -> int:
         with self._lock:
             jobs = self.data.setdefault("downloads", {})
             removed = 0
             for key in list(jobs.keys()):
-                if jobs[key].get("state") in ("done", "cancelled"):
+                if jobs[key].get("state") in FINISHED_DOWNLOAD_STATES:
                     jobs.pop(key, None)
                     removed += 1
             if removed:
                 self._save()
         return removed
+
+    def clear_finished_downloads_with_files(self) -> Dict[str, Any]:
+        with self._lock:
+            jobs = self.data.setdefault("downloads", {})
+            removed = 0
+            files_deleted = 0
+            file_errors = []
+            for key in list(jobs.keys()):
+                job = jobs[key]
+                if job.get("state") not in FINISHED_DOWNLOAD_STATES:
+                    continue
+                try:
+                    if _delete_download_output_file(job):
+                        files_deleted += 1
+                except OSError as exc:
+                    file_errors.append({
+                        "id": key,
+                        "path": job.get("output_path") or "",
+                        "error": str(exc),
+                    })
+                    continue
+                jobs.pop(key, None)
+                removed += 1
+            if removed:
+                self._save()
+            return {
+                "removed": removed,
+                "files_deleted": files_deleted,
+                "file_errors": file_errors,
+            }
 
     # ---------- Tracking ----------
 

@@ -32,12 +32,15 @@ dist-*/
 
 # Logs and local runtime state
 logs/
+Téléchargements/
+Telechargements/
 *.log
 *.out.log
 *.err.log
 *.local
 tmp*/
 temp/
+desktop-runtime.json
 
 # Editors and OS files
 .vscode/

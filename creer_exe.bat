@@ -17,10 +17,14 @@ if not exist "pyproject.toml" (
   goto FAIL
 )
 
-if not exist "build\autoflix.spec" (
-  echo ERREUR: build\autoflix.spec est introuvable.
-  goto FAIL
-)
+call :CHECK_REQUIRED "build\autoflix.spec"
+if errorlevel 1 goto FAIL
+call :CHECK_REQUIRED "build\launcher.py"
+if errorlevel 1 goto FAIL
+call :CHECK_REQUIRED "src\autoflix_cli\app\static\app.js"
+if errorlevel 1 goto FAIL
+call :CHECK_REQUIRED "src\autoflix_cli\app\static\index.html"
+if errorlevel 1 goto FAIL
 
 call :CHECK_UNLOCKED "%APP_EXE%" "%APP_NAME%"
 if errorlevel 1 goto FAIL
@@ -72,7 +76,8 @@ echo [4/5] Verification rapide du code Python...
   src\autoflix_cli\app\store.py ^
   src\autoflix_cli\app\autostart.py ^
   src\autoflix_cli\app\downloads.py ^
-  src\autoflix_cli\app\tracker_service.py
+  src\autoflix_cli\app\tracker_service.py ^
+  src\autoflix_cli\scraping\goldenanime.py
 if errorlevel 1 goto FAIL
 
 echo [5/5] Build PyInstaller...
@@ -123,6 +128,11 @@ echo.
 set /p "OPEN_PY=Ouvrir la page de telechargement maintenant ? [O/N] "
 if /I "%OPEN_PY%"=="O" start "" "%PYTHON_DOWNLOAD_URL%"
 goto FAIL
+
+:CHECK_REQUIRED
+if exist "%~1" exit /b 0
+echo ERREUR: %~1 est introuvable.
+exit /b 1
 
 :CHECK_UNLOCKED
 if not exist "%~1" exit /b 0

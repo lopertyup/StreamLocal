@@ -9,6 +9,7 @@ const state = {
   appFullscreenMode: null,
   videoFullscreenPromoting: false,
   videoFullscreenToggleAt: 0,
+  videoNativeFullscreenSuppressUntil: 0,
   scanProviders: [],
   scanResults: [],
   scanDetails: null,
@@ -35,6 +36,8 @@ const state = {
   subtitleTrackLoadNonce: 0,
   preferredQuality: "max",
   downloads: [],
+  downloadPath: "",
+  downloadFilter: "all",
   ffmpegAvailable: true,
   pollTimer: null,
   iframePlayer: null,
@@ -68,6 +71,8 @@ const SCAN_READER_MAX_ZOOM = 3;
 const SCAN_READER_ZOOM_STEP = 0.25;
 const SCAN_READER_PAN_THRESHOLD = 5;
 const VIDEO_FULLSCREEN_TOGGLE_GUARD_MS = 350;
+const VIDEO_NATIVE_FULLSCREEN_SUPPRESS_MS = 900;
+const DOWNLOAD_ACTIVE_STATES = new Set(["queued", "resolving", "downloading"]);
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -307,7 +312,13 @@ async function demoteVideoElementFullscreen() {
 }
 
 function handleFullscreenChange() {
+  const suppressVideoNativeFullscreen = Date.now() < state.videoNativeFullscreenSuppressUntil;
   if (fullscreenOwner(video)) {
+    if (suppressVideoNativeFullscreen) {
+      exitFullscreenMode().catch((error) => devLog("fullscreen_exit_error", { message: error.message }, "warning"));
+      updateFullscreenButtons();
+      return;
+    }
     if (appFullscreenActive("video")) {
       demoteVideoElementFullscreen().catch((error) => showToast(error.message));
     } else {
@@ -2350,6 +2361,7 @@ async function renderDownloads() {
   try {
     const result = await api("/api/downloads");
     state.downloads = result.downloads;
+    state.downloadPath = result.download_path || "";
     state.ffmpegAvailable = result.ffmpeg_available;
     app.innerHTML = `
       <div class="section-header">
@@ -2358,9 +2370,15 @@ async function renderDownloads() {
           <h1>Téléchargements</h1>
         </div>
         <div class="inline-actions">
-          <button class="tiny-button" type="button" id="clear-done-downloads">Effacer les terminés</button>
+          <button class="tiny-button danger" type="button" id="clear-done-downloads">Supprimer terminés</button>
           <button class="tiny-button" type="button" id="refresh-downloads">Actualiser</button>
         </div>
+      </div>
+      <div class="download-summary">
+        ${downloadSummaryHtml()}
+      </div>
+      <div class="download-filters">
+        ${downloadFilterButtonsHtml()}
       </div>
       ${
         result.ffmpeg_available
@@ -2368,7 +2386,7 @@ async function renderDownloads() {
           : `<div class="download-error">FFmpeg introuvable. Installe ffmpeg et ajoute-le au PATH (https://ffmpeg.org).</div>`
       }
       <div class="download-list">
-        ${result.downloads.map(downloadItemHtml).join("") || `<div class="empty-state">Aucun téléchargement.</div>`}
+        ${downloadListHtml()}
       </div>
     `;
   } catch (error) {
@@ -2376,13 +2394,79 @@ async function renderDownloads() {
   }
 }
 
+function downloadCounts(downloads = state.downloads) {
+  return {
+    all: downloads.length,
+    active: downloads.filter((job) => DOWNLOAD_ACTIVE_STATES.has(job.state)).length,
+    done: downloads.filter((job) => job.state === "done").length,
+    errors: downloads.filter((job) => job.state === "failed").length,
+  };
+}
+
+function downloadSummaryHtml() {
+  const counts = downloadCounts();
+  return `
+    <div class="download-folder">
+      <span>Dossier courant</span>
+      <strong>${escapeHtml(state.downloadPath || "")}</strong>
+    </div>
+    <div class="download-counters">
+      <span class="pill">${counts.all} total</span>
+      <span class="pill">${counts.active} actifs</span>
+      <span class="pill">${counts.done} terminés</span>
+      <span class="pill">${counts.errors} erreurs</span>
+    </div>
+  `;
+}
+
+function downloadFilterButtonsHtml() {
+  const counts = downloadCounts();
+  const filters = [
+    ["all", "Tous", counts.all],
+    ["active", "Actifs", counts.active],
+    ["done", "Terminés", counts.done],
+    ["errors", "Erreurs", counts.errors],
+  ];
+  return filters.map(([key, label, count]) => (
+    `<button class="tiny-button download-filter ${state.downloadFilter === key ? "active" : ""}" type="button" data-download-filter="${key}">${label} (${count})</button>`
+  )).join("");
+}
+
+function filteredDownloads() {
+  if (state.downloadFilter === "active") {
+    return state.downloads.filter((job) => DOWNLOAD_ACTIVE_STATES.has(job.state));
+  }
+  if (state.downloadFilter === "done") {
+    return state.downloads.filter((job) => job.state === "done");
+  }
+  if (state.downloadFilter === "errors") {
+    return state.downloads.filter((job) => job.state === "failed");
+  }
+  return state.downloads;
+}
+
+function downloadListHtml() {
+  const jobs = filteredDownloads();
+  return jobs.map(downloadItemHtml).join("") || `<div class="empty-state">Aucun téléchargement.</div>`;
+}
+
+function updateDownloadsPanel() {
+  const summary = document.querySelector(".download-summary");
+  if (summary) summary.innerHTML = downloadSummaryHtml();
+  const filters = document.querySelector(".download-filters");
+  if (filters) filters.innerHTML = downloadFilterButtonsHtml();
+  const list = document.querySelector(".download-list");
+  if (list) list.innerHTML = downloadListHtml();
+}
+
 function downloadItemHtml(job) {
-  const state = job.state || "queued";
+  const jobState = job.state || "queued";
   const percentValue = Math.round(job.percent || 0);
   const sizeText = job.size ? formatBytes(job.size) : "";
-  const isActive = ["queued", "resolving", "downloading"].includes(state);
-  const canRetry = state === "failed";
-  const canOpen = state === "done";
+  const isActive = DOWNLOAD_ACTIVE_STATES.has(jobState);
+  const canRetry = jobState === "failed";
+  const canPlay = jobState === "done";
+  const canOpenFolder = Boolean(job.output_path) && !isActive;
   const error = job.error ? `<div class="download-error">${escapeHtml(job.error)}</div>` : "";
   const errorActions = job.error
     ? `<button class="tiny-button" type="button" data-copy-text="${escapeHtml(job.error)}">Copier l'erreur</button>`
@@ -2400,7 +2484,7 @@ function downloadItemHtml(job) {
             ${job.auto ? `<span>Auto</span>` : ""}
           </div>
         </div>
-        <span class="download-state ${state}">${escapeHtml(state)}</span>
+        <span class="download-state ${jobState}">${escapeHtml(jobState)}</span>
       </header>
       ${
         isActive
@@ -2412,10 +2496,10 @@ function downloadItemHtml(job) {
       ${error}
       <div class="download-actions">
         ${isActive ? `<button class="tiny-button danger" type="button" data-cancel-download="${escapeHtml(job.id)}">Annuler</button>` : ""}
-        ${canOpen ? `<button class="tiny-button" type="button" data-play-download="${escapeHtml(job.id)}" data-job-title="${escapeHtml(job.title || "")}">Lire</button>` : ""}
+        ${canPlay ? `<button class="tiny-button" type="button" data-play-download="${escapeHtml(job.id)}" data-job-title="${escapeHtml(job.title || "")}">Lire</button>` : ""}
         ${canRetry ? `<button class="tiny-button" type="button" data-retry-download="${escapeHtml(job.id)}">Réessayer</button>` : ""}
-        ${canOpen ? `<button class="tiny-button" type="button" data-open-download="${escapeHtml(job.id)}">Ouvrir le dossier</button>` : ""}
-        ${!isActive ? `<button class="tiny-button danger" type="button" data-delete-download="${escapeHtml(job.id)}">Retirer</button>` : ""}
+        ${canOpenFolder ? `<button class="tiny-button" type="button" data-open-download="${escapeHtml(job.id)}">Ouvrir le dossier</button>` : ""}
+        ${!isActive ? `<button class="tiny-button danger" type="button" data-delete-download="${escapeHtml(job.id)}">Supprimer</button>` : ""}
         ${errorActions}
       </div>
     </div>
@@ -2552,8 +2636,9 @@ async function refreshDownloadsBadge() {
   try {
     const result = await api("/api/downloads");
     state.downloads = result.downloads;
+    state.downloadPath = result.download_path || state.downloadPath || "";
     state.ffmpegAvailable = result.ffmpeg_available;
-    const active = result.downloads.filter((d) => ["queued", "resolving", "downloading"].includes(d.state)).length;
+    const active = result.downloads.filter((d) => DOWNLOAD_ACTIVE_STATES.has(d.state)).length;
     if (downloadsBadge) {
       if (active > 0) {
         downloadsBadge.textContent = String(active);
@@ -2563,10 +2648,7 @@ async function refreshDownloadsBadge() {
       }
     }
     if (state.currentView === "downloads") {
-      const list = document.querySelector(".download-list");
-      if (list) {
-        list.innerHTML = result.downloads.map(downloadItemHtml).join("") || `<div class="empty-state">Aucun téléchargement.</div>`;
-      }
+      updateDownloadsPanel();
     }
   } catch (_error) {
     // ignore
@@ -2834,9 +2916,19 @@ async function handleClick(event) {
 
   if (event.target.id === "refresh-downloads" || event.target.id === "clear-done-downloads") {
     if (event.target.id === "clear-done-downloads") {
-      await api("/api/downloads/clear-done", { method: "POST" });
+      const confirmed = window.confirm("Supprimer les téléchargements terminés, annulés ou en erreur, ainsi que leurs fichiers ?");
+      if (!confirmed) return;
+      const result = await api("/api/downloads/clear-done", { method: "POST" });
+      showToast(`${result.removed || 0} téléchargement(s) supprimé(s)`);
     }
     await renderDownloads();
+    return;
+  }
+
+  const downloadFilter = event.target.closest("[data-download-filter]");
+  if (downloadFilter) {
+    state.downloadFilter = downloadFilter.dataset.downloadFilter || "all";
+    updateDownloadsPanel();
     return;
   }
 
@@ -2929,7 +3021,10 @@ async function handleClick(event) {
 
   const deleteDownload = event.target.closest("[data-delete-download]");
   if (deleteDownload) {
-    await api(`/api/downloads/${deleteDownload.dataset.deleteDownload}`, { method: "DELETE" });
+    const confirmed = window.confirm("Supprimer ce téléchargement et son fichier du disque ?");
+    if (!confirmed) return;
+    const result = await api(`/api/downloads/${deleteDownload.dataset.deleteDownload}`, { method: "DELETE" });
+    showToast(result.file_deleted ? "Fichier supprimé" : "Téléchargement supprimé");
     refreshDownloadsBadge().catch(() => {});
     if (state.currentView === "downloads") await renderDownloads();
     return;
@@ -2938,11 +3033,13 @@ async function handleClick(event) {
 }
 
 async function toggleVideoFullscreen(event) {
-  event.preventDefault();
-  event.stopPropagation();
+  event?.preventDefault();
+  event?.stopPropagation();
+  event?.stopImmediatePropagation?.();
   const now = Date.now();
   if (now - state.videoFullscreenToggleAt < VIDEO_FULLSCREEN_TOGGLE_GUARD_MS) return;
   state.videoFullscreenToggleAt = now;
+  state.videoNativeFullscreenSuppressUntil = now + VIDEO_NATIVE_FULLSCREEN_SUPPRESS_MS;
   if (appFullscreenActive("video") || fullscreenOwner(video)) {
     if (fullscreenOwner(video)) {
       await exitFullscreenMode();
@@ -2955,7 +3052,7 @@ async function toggleVideoFullscreen(event) {
 
 document.getElementById("player-close").addEventListener("click", closePlayer);
 document.getElementById("mark-watched").addEventListener("click", () => postProgress(true));
-video.addEventListener("dblclick", toggleVideoFullscreen);
+video.addEventListener("dblclick", toggleVideoFullscreen, { capture: true });
 video.addEventListener("timeupdate", () => postProgress(false));
 video.addEventListener("volumechange", saveStoredPlayerState);
 video.addEventListener("ended", () => {

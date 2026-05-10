@@ -1,11 +1,21 @@
-from curl_cffi import requests as cffi_requests
+import base64
+import hashlib
 import json
 import re
+
+from Crypto.Cipher import AES
+from curl_cffi import requests as cffi_requests
+
 from ..proxy import DNS_OPTIONS
 
 from .config import portals
 
 scraper = cffi_requests.Session(impersonate="chrome", curl_options=DNS_OPTIONS)
+
+ALLANIME_KEY_PHRASE = b"Xot36i3lK3:v1"
+GOLDENANIME_REQUEST_TIMEOUT = 5
+ALLANIME_API_TIMEOUT = 8
+ALLANIME_CLOCK_TIMEOUT = 4
 
 
 class AnimeExtractor:
@@ -46,13 +56,108 @@ class AnimeExtractor:
         except Exception:
             return hex_str
 
+    def _allanime_headers(self):
+        return {
+            "Referer": self.allanime_referer + "/",
+            "Origin": "https://youtu-chan.com",
+        }
+
+    def _decrypt_allanime_payload(self, payload):
+        """Decrypt Allanime's AES-CTR tobeparsed payload."""
+        raw = base64.b64decode(payload + "=" * (-len(payload) % 4))
+        if len(raw) < 30:
+            return {}
+
+        nonce = raw[1:13]
+        encrypted = raw[13:-16]
+        key = hashlib.sha256(ALLANIME_KEY_PHRASE).digest()
+        cipher = AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=2)
+        decrypted = cipher.decrypt(encrypted).decode("utf-8")
+        return json.loads(decrypted)
+
+    def _allanime_episode_payload(self, response_data):
+        data = response_data.get("data", {}) if isinstance(response_data, dict) else {}
+        if isinstance(data, dict) and data.get("tobeparsed"):
+            decrypted = self._decrypt_allanime_payload(data["tobeparsed"])
+            if isinstance(decrypted, dict):
+                return decrypted
+        return data if isinstance(data, dict) else {}
+
+    def _decode_allanime_source_url(self, url):
+        if not url:
+            return ""
+        if url.startswith("--"):
+            url = self._decrypt_allanime(url)
+        if url.startswith("/"):
+            url = self.allanime_base.rstrip("/") + url
+        return url
+
+    def _allanime_title_key(self, value):
+        value = (value or "").lower()
+        value = re.sub(r"[^a-z0-9]+", " ", value)
+        return re.sub(r"\s+", " ", value).strip()
+
+    def _allanime_stream_type(self, url, source_type="", hls=False):
+        lower_url = (url or "").lower()
+        lower_type = (source_type or "").lower()
+        if hls or ".m3u8" in lower_url or "master" in lower_url:
+            return "M3U8"
+        if (
+            lower_url.endswith(".mp4")
+            or "/mp4/" in lower_url
+            or "fast4speed" in lower_url
+            or "mp4" in lower_type
+        ):
+            return "MP4"
+        if lower_type == "iframe":
+            return "IFRAME"
+        return "Player/M3U8"
+
+    def _allanime_score(self, priority, is_direct=False):
+        try:
+            score = int(float(priority or 0) * 10)
+        except (TypeError, ValueError):
+            score = 0
+        return score + (5 if is_direct else 0)
+
+    def _allanime_priority(self, source):
+        try:
+            return float(source.get("priority") or 0)
+        except (AttributeError, TypeError, ValueError):
+            return 0.0
+
+    def _fetch_allanime_clock_links(self, url):
+        if "/clock?" in url:
+            url = url.replace("/clock?", "/clock.json?", 1)
+
+        try:
+            response = scraper.get(
+                url,
+                headers=self._allanime_headers(),
+                timeout=ALLANIME_CLOCK_TIMEOUT,
+            )
+            if response.status_code != 200:
+                return []
+            data = response.json()
+        except Exception:
+            return []
+
+        links = data.get("links", []) if isinstance(data, dict) else []
+        if not isinstance(links, list):
+            return []
+        return links
+
     def search_sudatchi(self, anilist_id, episode=1):
         """Extraction from Sudatchi (direct M3U8)."""
         base_url = self.sudatchi_base
         api_url = f"{base_url}/api/episode/{anilist_id}/{episode}"
 
         try:
-            response = scraper.get(api_url, headers=self.headers, timeout=10)
+            response = scraper.get(
+                api_url,
+                headers=self.headers,
+                timeout=GOLDENANIME_REQUEST_TIMEOUT,
+            )
             if response.status_code != 200:
                 return []
 
@@ -76,9 +181,9 @@ class AnimeExtractor:
             return []
 
     def search_allanime(self, title, episode=1):
-        """Extraction from Allanime using latest GQL hashes and XOR-56 decryption."""
+        """Extraction from Allanime using GQL hashes and current payload decoding."""
         api_url = self.allanime_api
-        referer = self.allanime_referer
+        headers = self._allanime_headers()
 
         # Latest GQL Hashes from CineStream
         search_hash = "a24c500a1b765c68ae1d8dd85174931f661c71369c89b92b88b75a725afc471c"
@@ -101,8 +206,8 @@ class AnimeExtractor:
                     "variables": json.dumps(vars_search),
                     "extensions": json.dumps(ext_search),
                 },
-                headers={"Referer": referer},
-                timeout=10,
+                headers=headers,
+                timeout=ALLANIME_API_TIMEOUT,
             )
             shows = r.json().get("data", {}).get("shows", {}).get("edges", [])
             if not shows:
@@ -110,20 +215,20 @@ class AnimeExtractor:
 
             # Match title logic
             show_id = None
-            t_lower = title.lower().strip()
+            title_key = self._allanime_title_key(title)
             for edge in shows:
-                name = (edge.get("name") or "").lower().strip()
-                eng = (edge.get("englishName") or "").lower().strip()
-                if name == t_lower or eng == t_lower:
+                name = self._allanime_title_key(edge.get("name"))
+                eng = self._allanime_title_key(edge.get("englishName"))
+                if name == title_key or eng == title_key:
                     show_id = edge.get("_id")
                     break
 
             if not show_id and shows:
                 # Fuzzy fallback
                 for edge in shows:
-                    name = (edge.get("name") or "").lower().strip()
-                    eng = (edge.get("englishName") or "").lower().strip()
-                    if t_lower in name or t_lower in eng:
+                    name = self._allanime_title_key(edge.get("name"))
+                    eng = self._allanime_title_key(edge.get("englishName"))
+                    if title_key and (title_key in name or title_key in eng):
                         show_id = edge.get("_id")
                         break
 
@@ -147,32 +252,78 @@ class AnimeExtractor:
                     "variables": json.dumps(vars_ep),
                     "extensions": json.dumps(ext_ep),
                 },
-                headers={"Referer": referer},
-                timeout=10,
+                headers=headers,
+                timeout=ALLANIME_API_TIMEOUT,
             )
-            sources = r.json().get("data", {}).get("episode", {}).get("sourceUrls", [])
+            episode_data = self._allanime_episode_payload(r.json())
+            episode_payload = episode_data.get("episode", episode_data)
+            sources = (
+                episode_payload.get("sourceUrls", [])
+                if isinstance(episode_payload, dict)
+                else []
+            )
 
             results = []
-            for src in sources:
-                url = src.get("sourceUrl")
-                if url.startswith("--"):
-                    url = self._decrypt_allanime(url)
+            has_direct_source = False
+            for src in sorted(sources, key=self._allanime_priority, reverse=True):
+                if not isinstance(src, dict):
+                    continue
 
-                # Fix relative paths if necessary
-                if url.startswith("/"):
-                    url = self.allanime_base + url
+                source_name = src.get("sourceName", "Default")
+                source_type = src.get("type", "")
+                priority = src.get("priority")
+                url = self._decode_allanime_source_url(src.get("sourceUrl", ""))
 
                 if not url.startswith("http"):
                     continue
 
+                if "/clock" in url:
+                    if has_direct_source:
+                        continue
+                    for link in self._fetch_allanime_clock_links(url):
+                        if not isinstance(link, dict):
+                            continue
+                        link_url = link.get("link") or link.get("url")
+                        if not link_url:
+                            continue
+                        quality = link.get("resolutionStr") or link.get("quality") or "HLS"
+                        stream_type = self._allanime_stream_type(
+                            link_url,
+                            source_type,
+                            bool(link.get("hls")),
+                        )
+                        direct = stream_type in {"M3U8", "MP4", "VIDEO"}
+                        if direct:
+                            has_direct_source = True
+                        results.append(
+                            {
+                                "source": f"Allanime ({source_name} {quality})",
+                                "quality": quality,
+                                "url": link_url,
+                                "type": stream_type,
+                                "headers": headers,
+                                "direct": direct,
+                                "score": self._allanime_score(priority, direct),
+                            }
+                        )
+                    continue
+
+                stream_type = self._allanime_stream_type(url, source_type)
+                direct = stream_type in {"M3U8", "MP4", "VIDEO"}
+                if direct:
+                    has_direct_source = True
                 results.append(
                     {
-                        "source": f"Allanime ({src.get('sourceName', 'Default')})",
-                        "quality": "Multi",
+                        "source": f"Allanime ({source_name})",
+                        "quality": "MP4" if stream_type == "MP4" else "Multi",
                         "url": url,
-                        "type": "Player/M3U8",
+                        "type": stream_type,
+                        "headers": headers,
+                        "direct": direct if stream_type != "IFRAME" else True,
+                        "score": self._allanime_score(priority, direct),
                     }
                 )
+            results.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
             return results
         except Exception:
             return []
@@ -185,7 +336,7 @@ class AnimeExtractor:
             r = scraper.get(
                 f"{base_url}/search?keyword={title}",
                 headers=self.headers,
-                timeout=10,
+                timeout=GOLDENANIME_REQUEST_TIMEOUT,
             )
 
             # Match slug logic
@@ -208,7 +359,11 @@ class AnimeExtractor:
 
             # 2. Episode page
             ep_url = f"{base_url}/anime/{best_slug}/{episode}"
-            r = scraper.get(ep_url, headers=self.headers, timeout=10)
+            r = scraper.get(
+                ep_url,
+                headers=self.headers,
+                timeout=GOLDENANIME_REQUEST_TIMEOUT,
+            )
 
             # Find media-player src (M3U8)
             player_match = re.search(r'<media-player[^>]+src="([^"]+)"', r.text)
@@ -236,7 +391,7 @@ class AnimeExtractor:
             r = scraper.get(
                 f"{base_api}/anime/search/?query={title}",
                 headers=headers,
-                timeout=10,
+                timeout=GOLDENANIME_REQUEST_TIMEOUT,
             )
             results = r.json().get("results", [])
 
@@ -266,7 +421,7 @@ class AnimeExtractor:
             r = scraper.get(
                 f"{base_api}/anime/servers/{gojo_id}/{episode}",
                 headers=headers,
-                timeout=10,
+                timeout=GOLDENANIME_REQUEST_TIMEOUT,
             )
             servers_data = r.json()
 
@@ -282,7 +437,7 @@ class AnimeExtractor:
                         r = scraper.get(
                             f"{base_api}/anime/oppai/{gojo_id}/{episode}?server={server_id}&source_type={lang}",
                             headers=headers,
-                            timeout=10,
+                            timeout=GOLDENANIME_REQUEST_TIMEOUT,
                         )
                         stream_data = r.json()
                         sources = stream_data.get("sources", [])
@@ -322,9 +477,34 @@ class AnimeExtractor:
         except Exception:
             return []
 
+    def _dedupe_results(self, results):
+        unique = {}
+        for result in results:
+            url = result.get("url")
+            if url and url not in unique:
+                unique[url] = result
+        return list(unique.values())
+
+    def _has_direct_stream(self, results):
+        for result in results:
+            url = (result.get("url") or "").lower()
+            stream_type = (result.get("type") or "").upper()
+            if (
+                stream_type in {"M3U8", "MP4", "VIDEO"}
+                or ".m3u8" in url
+                or "master" in url
+            ):
+                return True
+        return False
+
     def extract_vo(self, title=None, anilist_id=None, episode=1):
         """Search, deduplication, and sorting."""
         results = []
+
+        if title:
+            results.extend(self.search_allanime(title, episode))
+            if self._has_direct_stream(results):
+                return self._dedupe_results(results)
 
         if anilist_id:
             results.extend(self.search_sudatchi(anilist_id, episode))
@@ -332,15 +512,8 @@ class AnimeExtractor:
             results.extend(self.search_anizone(title, episode))
         if title and anilist_id:
             results.extend(self.search_animetsu(title, anilist_id, episode))
-        if title:
-            results.extend(self.search_allanime(title, episode))
 
-        # Simple deduplication by URL
-        unique = {}
-        for r in results:
-            if r["url"] not in unique:
-                unique[r["url"]] = r
-        return list(unique.values())
+        return self._dedupe_results(results)
 
 
 # Instantiate a global instance for easy use

@@ -1,4 +1,5 @@
 import urllib.parse
+from pathlib import Path
 
 from autoflix_cli.app import downloads
 from autoflix_cli.proxy import decode_headers_param, encode_headers_token
@@ -47,3 +48,58 @@ def test_resolve_best_hls_variant_rewrites_proxy_to_highest_bandwidth(monkeypatc
     assert params["url"] == ["https://cdn.test/hls/high.m3u8?token=two"]
     assert decode_headers_param(params["headers"][0]) == headers
     assert calls == [(master_url, headers, 20, "chrome")]
+
+
+def test_hls_ffmpeg_command_allows_obfuscated_segment_extensions():
+    cmd = downloads.build_ffmpeg_command(
+        "ffmpeg",
+        "hls",
+        "http://127.0.0.1:12345/stream/index-f3-v1-a1.txt",
+        Path("episode.mp4"),
+    )
+
+    option_index = cmd.index("-allowed_segment_extensions")
+    assert cmd[option_index + 1] == "ALL"
+    picky_index = cmd.index("-extension_picky")
+    assert cmd[picky_index + 1] == "0"
+
+
+def test_hls_ffmpeg_command_can_send_provider_headers():
+    cmd = downloads.build_ffmpeg_command(
+        "ffmpeg",
+        "hls",
+        "https://cdn.test/video.m3u8",
+        Path("episode.mp4"),
+        headers={
+            "Origin": "https://player.videasy.net",
+            "Referer": "https://player.videasy.net/",
+        },
+    )
+
+    headers_index = cmd.index("-headers")
+    input_index = cmd.index("-i")
+
+    assert headers_index < input_index
+    assert "Origin: https://player.videasy.net\r\n" in cmd[headers_index + 1]
+    assert "Referer: https://player.videasy.net/\r\n" in cmd[headers_index + 1]
+
+
+def test_videasy_download_uses_passthrough_hls_without_changing_playback_url():
+    playback = {
+        "stream_url": "http://127.0.0.1:12345/stream/video.m3u8?url=proxied",
+        "passthrough_stream_url": "https://yoru.midwesteagle.com/video.m3u8?q=token",
+        "media_kind": "hls",
+    }
+    source_payload = {
+        "stream_context": "videasy",
+        "headers": {"Referer": "https://player.videasy.net/"},
+    }
+
+    stream_url, media_kind, headers = downloads.download_stream_from_playback(
+        playback,
+        source_payload,
+    )
+
+    assert stream_url == "https://yoru.midwesteagle.com/video.m3u8?q=token"
+    assert media_kind == "hls"
+    assert headers == {"Referer": "https://player.videasy.net/"}

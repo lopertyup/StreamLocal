@@ -22,7 +22,7 @@ from .models import ProviderError
 from .playback import prepare_playback
 from .providers import ProviderService
 from .scans import ScanService
-from .store import DesktopStore
+from .store import ACTIVE_DOWNLOAD_STATES, DesktopStore
 from .subtitles import fetch_subtitle_as_vtt, subtitle_request_from_token
 from .tracker_service import TrackerService
 
@@ -101,6 +101,15 @@ def _clean_playback_episode_context(value: Any) -> Dict[str, Any]:
             context[key] = cleaned
 
     return context
+
+
+def _download_counts(downloads: list[Dict[str, Any]]) -> Dict[str, int]:
+    return {
+        "all": len(downloads),
+        "active": sum(1 for item in downloads if item.get("state") in ACTIVE_DOWNLOAD_STATES),
+        "done": sum(1 for item in downloads if item.get("state") == "done"),
+        "errors": sum(1 for item in downloads if item.get("state") == "failed"),
+    }
 
 
 def create_app(
@@ -679,8 +688,12 @@ def create_app(
     def list_downloads():
         current_store: DesktopStore = app.config["AUTOFLIX_STORE"]
         ffmpeg = find_ffmpeg()
+        downloads = current_store.list_downloads()
+        preferences = current_store.get_preferences()
         return jsonify({
-            "downloads": current_store.list_downloads(),
+            "downloads": downloads,
+            "counts": _download_counts(downloads),
+            "download_path": preferences.get("download_path") or "",
             "ffmpeg_available": bool(ffmpeg),
             "ffmpeg_path": ffmpeg or "",
         })
@@ -715,8 +728,15 @@ def create_app(
     @app.route("/api/downloads/<job_id>", methods=["DELETE"])
     def delete_download(job_id: str):
         current_store: DesktopStore = app.config["AUTOFLIX_STORE"]
-        ok = current_store.delete_download(job_id)
-        return jsonify({"ok": ok})
+        try:
+            result = current_store.delete_download_with_file(job_id)
+        except OSError as exc:
+            return _json_error(f"Impossible de supprimer le fichier: {exc}", "delete_file_failed", 500)
+        if result.get("missing"):
+            return _json_error("Job introuvable.", "unknown_job", 404)
+        if result.get("active"):
+            return _json_error("Téléchargement actif. Annule-le avant de le supprimer.", "active_download", 409)
+        return jsonify(result)
 
     @app.route("/api/downloads/<job_id>/file")
     def serve_download_file(job_id: str):
@@ -766,8 +786,10 @@ def create_app(
     @app.route("/api/downloads/clear-done", methods=["POST"])
     def clear_done_downloads():
         current_store: DesktopStore = app.config["AUTOFLIX_STORE"]
-        removed = current_store.clear_finished_downloads()
-        return jsonify({"removed": removed})
+        summary = current_store.clear_finished_downloads_with_files()
+        if summary.get("file_errors"):
+            return jsonify(summary), 500
+        return jsonify(summary)
 
     # ---------- Tracking ----------
 

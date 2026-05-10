@@ -9,6 +9,8 @@ Le dépôt public est pensé pour les utilisateurs. Il contient le script de
 création de l'exécutable, mais pas les scripts de maintenance utilisés pour
 pousser les mises à jour.
 
+Version actuelle : `0.6.6` - V6 finalisée le 10/05/2026.
+
 ## Installation Rapide
 
 1. Télécharge le dépôt depuis GitHub avec `Code` puis `Download ZIP`.
@@ -68,6 +70,16 @@ dist\
 Ces dossiers sont normaux. Ils servent à construire l'application et ne doivent
 pas être envoyés sur GitHub.
 
+Les vidéos téléchargées depuis l'application sont enregistrées dans un dossier
+local à côté du projet :
+
+```text
+StreamLocal-main\Téléchargements\
+```
+
+Si tu as renommé le dossier extrait, le dossier `Téléchargements` est créé dans
+ce dossier renommé.
+
 ## Lancer L'Application
 
 Double-clique sur :
@@ -104,6 +116,28 @@ FFmpeg peut être installé depuis :
 ```text
 https://ffmpeg.org/download.html
 ```
+
+Par défaut, les fichiers vont dans `Téléchargements\` à la racine du dossier
+StreamLocal. Dans l'onglet `Téléchargements`, tu peux voir le dossier courant,
+filtrer la liste (`Tous`, `Actifs`, `Terminés`, `Erreurs`) et utiliser les
+actions `Lire`, `Ouvrir le dossier`, `Réessayer`, `Annuler` ou `Supprimer`.
+
+`Supprimer` efface le fichier vidéo du disque et retire l'entrée de la liste.
+Un téléchargement actif doit d'abord être annulé. Le bouton `Supprimer terminés`
+efface aussi les fichiers des téléchargements terminés, annulés ou en erreur.
+
+Depuis la V6, les téléchargements HLS sont plus tolérants avec les sources
+fragiles : Anime-Sama, GoldenMS/VidEasy et GoldenAnime/AllAnime ont été
+renforcés, et les fichiers téléchargés depuis plusieurs lecteurs gardent le nom
+du lecteur dans le fichier pour éviter les collisions.
+
+## Nouveautés V6
+
+- Téléchargements HLS corrigés pour les playlists et segments obfusqués.
+- GoldenAnime/AllAnime charge les sources plus vite et résout les liens chiffrés.
+- GoldenMS/VidEasy peut télécharger les flux qui restaient bloqués à 0%.
+- Les téléchargements manuels depuis plusieurs lecteurs ne s'écrasent plus.
+- Le double-clic sur la vidéo bascule correctement le plein écran une seule fois.
 
 ## Manga Et Scans
 
@@ -160,6 +194,7 @@ Le dépôt ne doit pas contenir :
 - `.venv\`;
 - `dist\`;
 - `build\autoflix\`;
+- `Téléchargements\`;
 - fichiers de logs;
 - caches Python;
 - données utilisateur locales;

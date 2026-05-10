@@ -9,6 +9,15 @@ echo === AutoFlix build ===
 echo Working dir: %cd%
 echo.
 
+call :CHECK_REQUIRED "build\autoflix.spec"
+if errorlevel 1 exit /b 1
+call :CHECK_REQUIRED "build\launcher.py"
+if errorlevel 1 exit /b 1
+call :CHECK_REQUIRED "src\autoflix_cli\app\static\app.js"
+if errorlevel 1 exit /b 1
+call :CHECK_REQUIRED "src\autoflix_cli\app\static\index.html"
+if errorlevel 1 exit /b 1
+
 call :CHECK_UNLOCKED "dist\AutoFlix.exe" "AutoFlix"
 if errorlevel 1 exit /b 1
 
@@ -67,3 +76,8 @@ if errorlevel 1 (
   exit /b 1
 )
 exit /b 0
+
+:CHECK_REQUIRED
+if exist "%~1" exit /b 0
+echo Required build file missing: %~1
+exit /b 1

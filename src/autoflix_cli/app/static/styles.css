@@ -959,6 +959,39 @@ body.app-video-fullscreen .player-iframe {
   gap: 10px;
 }
 
+.download-summary {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.download-folder {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.download-folder strong {
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.download-counters,
+.download-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.download-filter.active {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
 .download-item {
   border: 1px solid var(--line);
   border-radius: 8px;
