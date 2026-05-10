@@ -1,179 +1,173 @@
-# AutoFlix CLI
+# StreamLocal
 
-AutoFlix is a Python CLI and desktop app for searching movies, series, anime,
-and scan/manga chapters from supported providers. It resolves playable sources,
-uses a local proxy for HLS/MP4 playback, and can launch streams in a browser,
-mpv, VLC, or the built-in desktop player.
+StreamLocal est une application Windows locale pour rechercher et lire des
+films, séries, animes et mangas/scans depuis les providers intégrés. L'app se
+lance dans une fenêtre native, garde les données sur ton PC, et peut créer son
+propre fichier `.exe` à partir du code téléchargé.
 
-The app stores user preferences and history locally. No account is required.
-AniList integration is optional and only uses a token provided by the user at
-runtime.
+Le dépôt public est pensé pour les utilisateurs. Il contient le script de
+création de l'exécutable, mais pas les scripts de maintenance utilisés pour
+pousser les mises à jour.
 
-## Features
+## Installation Rapide
 
-- Interactive terminal mode with provider search and playback.
-- Desktop UI with search, history, favorites, scan reader, tracking, and downloads.
-- Local HLS/MP4 proxy for stream playback and range requests.
-- Optional AniList progress sync and media mapping.
-- Optional FFmpeg-backed downloads from the desktop UI.
-- Windows tray mode, background startup, and Windows executable build support.
+1. Télécharge le dépôt depuis GitHub avec `Code` puis `Download ZIP`.
+2. Décompresse le fichier ZIP.
+3. Ouvre le dossier extrait, par exemple `StreamLocal-main`.
+4. Double-clique sur `creer_exe.bat`.
+5. À la fin, lance `dist\AutoFlix.exe`.
 
-## Requirements
+## Prérequis
 
-- Python 3.9.2 or newer.
-- `uv` recommended for development and reproducible installs.
-- A media player such as mpv, VLC, or a browser.
-- FFmpeg in `PATH` if you want to use desktop downloads.
+Il faut Python 3.12 pour créer l'exécutable.
 
-## Install From Source
-
-```powershell
-git clone https://github.com/PaulExplorer/autoflix-cli.git
-cd autoflix-cli
-uv sync
-```
-
-Run without installing globally:
-
-```powershell
-uv run autoflix
-uv run autoflix-desktop
-```
-
-With pip:
-
-```powershell
-python -m pip install .
-autoflix
-autoflix-desktop
-```
-
-If the package is published on PyPI, you can also install it as a tool:
-
-```powershell
-uv tool install autoflix-cli
-```
-
-## Usage
-
-CLI:
-
-```powershell
-autoflix
-```
-
-Desktop UI:
-
-```powershell
-autoflix-desktop
-autoflix-desktop --browser
-autoflix-desktop --background
-autoflix-desktop --serve-only
-```
-
-`--background` starts AutoFlix hidden in the Windows tray so tracking and
-downloads can keep running. `--serve-only` starts only the local server and
-prints the URL.
-
-## Configuration And Data
-
-Project configuration files live in `data/` and provide default provider URLs
-and player extraction settings. User state is stored in the operating system
-user-data directory through `platformdirs`; it is not meant to be committed.
-
-Local user data can include:
-
-- watch history and resume data;
-- language and player preferences;
-- favorites, downloads, tracking settings, and notifications;
-- AniList token and AniList mappings if the user enables AniList.
-
-Never commit local runtime files, logs, `.env` files, or user-data JSON files.
-
-## AniList
-
-AniList support is optional. Add a token from the desktop settings or CLI
-settings only on your own machine. The repository must not contain real AniList
-tokens, authorization headers, cookies, or API keys.
-
-## Build The Windows Executable
-
-The repository keeps only the build sources:
-
-- `build/build.bat`
-- `build/autoflix.spec`
-- `build/launcher.py`
-- `build/autoflix.ico`
-- `build/make_icon.py`
-
-Build:
-
-```powershell
-build\build.bat
-```
-
-The generated executable is written to `dist\AutoFlix.exe`. Generated `dist/`
-and PyInstaller work directories are ignored by Git.
-
-## Development
-
-Install dependencies and run checks:
-
-```powershell
-uv sync
-uv run python -m compileall src
-uv run --with pytest python -m pytest
-```
-
-Run the app from the source tree:
-
-```powershell
-uv run autoflix
-uv run autoflix-desktop
-```
-
-To add a scan or manga provider, see
-`docs/scan-provider-implementation.md`.
-
-## Project Layout
+Le script vérifie automatiquement Python. Si Python 3.12 est absent, il affiche
+le lien officiel :
 
 ```text
-src/autoflix_cli/
-  main.py              CLI entry point
-  desktop.py           desktop launcher
-  proxy.py             local playback proxy
-  tracker.py           CLI local state
-  handlers/            CLI provider handlers
-  scraping/            provider scrapers and player extraction
-  app/                 desktop Flask API and static UI
-data/                  public default provider configuration
-docs/                  developer notes
-build/                 Windows packaging sources
-tests/                 automated tests
+https://www.python.org/downloads/windows/
 ```
 
-## Security
+Pendant l'installation de Python, coche `Add python.exe to PATH`.
 
-Do not publish secrets or private runtime data. Before opening a pull request or
-publishing a fork, search for:
+## Ce Que Fait `creer_exe.bat`
+
+Le fichier `creer_exe.bat` automatise toute la création de l'application :
+
+1. Il vérifie que le dossier contient bien le projet.
+2. Il cherche Python 3.12 avec `py -3.12`, puis avec `python`.
+3. Il refuse d'écraser `dist\AutoFlix.exe` si l'application est déjà ouverte.
+4. Il crée un environnement local `.venv` si nécessaire.
+5. Il active ou met à jour `pip`.
+6. Il vérifie si les dépendances sont déjà installées.
+7. Si elles manquent, il installe le projet, ses dépendances et PyInstaller.
+8. Il compile rapidement les fichiers Python importants pour détecter les erreurs.
+9. Il lance PyInstaller avec `build\autoflix.spec`.
+10. Il crée l'exécutable final dans `dist\AutoFlix.exe`.
+
+Si tu relances le script plus tard, il réutilise ce qui existe déjà quand c'est
+possible. Il ne réinstalle pas tout inutilement si l'environnement `.venv` est
+déjà correct.
+
+## Où Sont Créés Les Fichiers
+
+Après la création, tu trouveras :
 
 ```text
-token
-secret
-password
-api_key
-authorization
-cookie
-local user paths
+dist\AutoFlix.exe
 ```
 
-## License
+Le script crée aussi des dossiers techniques locaux :
 
-This project is licensed under GPL-3.0. See `LICENSE`.
+```text
+.venv\
+build\autoflix\
+dist\
+```
 
-## Disclaimer
+Ces dossiers sont normaux. Ils servent à construire l'application et ne doivent
+pas être envoyés sur GitHub.
 
-AutoFlix is a personal-use tool that indexes third-party websites. Provider
-availability, URLs, and playback behavior can change at any time. Use the
-software only where you have the right to access the content, and respect the
-laws and terms that apply in your jurisdiction.
+## Lancer L'Application
+
+Double-clique sur :
+
+```text
+dist\AutoFlix.exe
+```
+
+L'application ouvre une fenêtre AutoFlix. Elle peut aussi rester dans la zone de
+notification Windows si l'option de réduction dans le tray est activée.
+
+## Données Locales
+
+StreamLocal garde les données utilisateur sur ton ordinateur :
+
+- historique de lecture;
+- progression;
+- favoris;
+- réglages;
+- téléchargements;
+- suivi local des épisodes et chapitres;
+- notifications en attente.
+
+Ces données ne sont pas incluses dans le dépôt GitHub.
+
+## Téléchargements Vidéo
+
+Les téléchargements depuis l'interface utilisent FFmpeg. Si FFmpeg n'est pas
+disponible dans le `PATH`, l'application peut lire les contenus mais les
+téléchargements peuvent être indisponibles.
+
+FFmpeg peut être installé depuis :
+
+```text
+https://ffmpeg.org/download.html
+```
+
+## Manga Et Scans
+
+L'onglet `Manga` utilise le lecteur scans unique de l'application. Il regroupe
+les providers manga/scans disponibles, notamment Anime-Sama et Lelscans quand
+ils répondent.
+
+En plein écran, le lecteur scans permet :
+
+- zoom à la molette;
+- déplacement par clic maintenu;
+- changement de page par clic gauche/droite en mode page.
+
+## Problèmes Courants
+
+### Python 3.12 est introuvable
+
+Installe Python 3.12 depuis :
+
+```text
+https://www.python.org/downloads/windows/
+```
+
+Puis relance `creer_exe.bat`.
+
+### `dist\AutoFlix.exe` est verrouillé
+
+AutoFlix est probablement déjà ouvert. Ferme l'application depuis la fenêtre ou
+depuis la zone de notification Windows, puis relance `creer_exe.bat`.
+
+### Le premier build est long
+
+C'est normal. Le premier lancement télécharge les dépendances Python et construit
+l'exécutable. Les lancements suivants réutilisent l'environnement local quand il
+est déjà prêt.
+
+### Des warnings apparaissent pendant PyInstaller
+
+Certains warnings de dépendances sont normaux pendant le build. Le point
+important est la ligne finale indiquant que `dist\AutoFlix.exe` a été créé.
+
+## Ce Qui Est Inclus Dans Le Dépôt
+
+Le dépôt contient :
+
+- le code source de l'application;
+- les fichiers de configuration publics dans `data\`;
+- les fichiers de build dans `build\`;
+- `creer_exe.bat` pour construire l'exécutable;
+- les tests et fichiers nécessaires au projet.
+
+Le dépôt ne doit pas contenir :
+
+- `.venv\`;
+- `dist\`;
+- `build\autoflix\`;
+- fichiers de logs;
+- caches Python;
+- données utilisateur locales;
+- scripts de push ou maintenance privée.
+
+## Licence Et Responsabilité
+
+StreamLocal est un outil local qui automatise la recherche et la lecture via des
+providers tiers. Il n'héberge aucun contenu. Utilise-le uniquement là où tu as le
+droit d'accéder aux contenus concernés, et respecte les lois et conditions qui
+s'appliquent dans ton pays.
