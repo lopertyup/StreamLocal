@@ -1,8 +1,53 @@
-# Some files from python, uv and vscode
-.venv
-__pycache__
-.vscode
-dist/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 
-# file with my tests of players
-test.md 
+# Virtual environments and package managers
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Test, type-checker, and tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build outputs
+dist/
+dist-*/
+*.egg-info/
+*.spec.bak
+/build/*
+!/build/build.bat
+!/build/autoflix.spec
+!/build/launcher.py
+!/build/autoflix.ico
+!/build/make_icon.py
+
+# Logs and local runtime state
+logs/
+*.log
+*.out.log
+*.err.log
+*.local
+tmp*/
+temp/
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Agent/local assistant state
+.claude/
+AGENTS.md
+
+# Manual scratch files
+test.md

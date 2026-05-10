@@ -140,7 +140,7 @@ DEFAULT_SOURCE_PORTAL = {
     "allanime-base": "https://allanime.day",
     "anizone": "https://anizone.to",
     "videasy": "https://api.videasy.net",
-    "videasy-referer": "https://cineby.gd",
+    "videasy-referer": "https://player.videasy.net",
     "vidlink": "https://vidlink.pro",
     "hexa": "https://themoviedb.hexa.su",
     "hexa-referer": "https://hexa.su",

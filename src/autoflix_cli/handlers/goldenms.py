@@ -1,7 +1,6 @@
 import urllib.parse
 from curl_cffi import requests
 from ..scraping.goldenms import goldenms_extractor
-from ..scraping.subtitles import subtitle_extractor
 from ..cli_utils import (
     select_from_list,
     print_header,
@@ -13,7 +12,6 @@ from ..cli_utils import (
 )
 from ..player_manager import play_video
 from ..tracker import tracker
-from ..languages import get_language_label
 from ..scraping import player as player_scraper
 import re
 
@@ -209,42 +207,6 @@ def _flow_goldenms_stream(
 
     selection = valid_results[choice_idx]
 
-    # Subtitles logic
-    subtitle_url = None
-    user_lang = tracker.get_language() or "fr"
-    lang_name = get_language_label(user_lang)
-
-    want_subs = select_from_list(["Yes", "No"], f"Search for {lang_name} subtitles?")
-    if want_subs == 0:
-        current_imdb_id = imdb_id
-        if not current_imdb_id:
-            current_imdb_id = get_user_input(
-                "Enter IMDB ID (e.g. tt0388629, leave blank to skip subtitles)"
-            )
-        if current_imdb_id:
-            sub_season = season if not is_movie else None
-            sub_ep = episode if not is_movie else None
-
-            print_info(f"Searching for {lang_name} subtitles...")
-            subs = subtitle_extractor.search(
-                imdb_id=current_imdb_id,
-                season=sub_season,
-                episode=sub_ep,
-                lang_filter=user_lang,
-            )
-
-            if subs:
-                sub_opts = [
-                    f"{s['source']} - {s.get('lang', lang_name)}" for s in subs
-                ] + ["Skip Subtitles"]
-                sub_choice = select_from_list(sub_opts, "Select Subtitle:")
-                if sub_choice < len(subs):
-                    subtitle_url = subs[sub_choice]["url"]
-                    print_info(f"Selected subtitle: {subtitle_url}")
-            else:
-                print_warning(f"No {lang_name} subtitles found.")
-                pause()
-
     final_url = selection["url"]
     type_ = selection["type"].upper()
 
@@ -282,6 +244,10 @@ def _flow_goldenms_stream(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     }
 
+    stream_context = str(selection.get("stream_context") or "").strip().lower()
+    if stream_context == "videasy":
+        headers.update(selection.get("headers") or {})
+
     # Note: vidlink expects origin/referer headers, hexa might just need generic
     if "vidlink" in selection["source"].lower():
         headers["Referer"] = f"{goldenms_extractor.vidlink_api}/"
@@ -291,8 +257,9 @@ def _flow_goldenms_stream(
         final_url,
         headers=headers,
         title=display_title,
-        subtitle_url=subtitle_url,
+        subtitle_url=None,
         is_direct=is_direct,
+        stream_context=stream_context,
     )
 
     if success:

@@ -1,5 +1,7 @@
+import math
+from typing import Any, Dict, List
+
 from curl_cffi import requests
-import random
 
 
 class SubtitleExtractor:
@@ -15,6 +17,60 @@ class SubtitleExtractor:
         "WYZIE": 3,
         "Subsense": 4,
     }
+
+    def _truthy(self, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+    def _number(self, value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _download_count(self, subtitle: Dict[str, Any]) -> float:
+        for key in ("download_count", "downloads", "g"):
+            count = self._number(subtitle.get(key))
+            if count:
+                return count
+        return 0.0
+
+    def _metadata_score(self, subtitle: Dict[str, Any]) -> float:
+        source = subtitle.get("source") or ""
+        priority = self.SOURCE_PRIORITY.get(source, 99)
+        score = max(0, 500 - priority * 60)
+
+        if self._truthy(subtitle.get("from_trusted") or subtitle.get("trusted")):
+            score += 80
+        if self._truthy(subtitle.get("ai_translated")):
+            score -= 140
+        if self._truthy(subtitle.get("machine_translated")):
+            score -= 140
+
+        downloads = self._download_count(subtitle)
+        if downloads:
+            score += min(90, math.log1p(downloads) * 18)
+
+        votes = self._number(subtitle.get("votes"))
+        if votes:
+            score += min(60, votes * 4)
+
+        return score
+
+    def _dedupe_subtitles(self, subtitles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        seen = set()
+        unique = []
+        for sub in subtitles:
+            url = sub.get("url")
+            key = url or sub.get("id")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique.append(sub)
+        return unique
 
     def _fetch_stremio(self, base_url, imdb_id, season=None, episode=None):
         """Helper for Stremio-style subtitle APIs."""
@@ -116,10 +172,14 @@ class SubtitleExtractor:
                     filtered.append(sub)
             all_subs = filtered
 
-        # 2. Sort by source priority (OpenSubs > WYZIE > Subsense)
-        # First shuffle to have a random order between links from the same source
-        random.shuffle(all_subs)
-        all_subs.sort(key=lambda x: self.SOURCE_PRIORITY.get(x["source"], 99))
+        all_subs = self._dedupe_subtitles(all_subs)
+        all_subs.sort(
+            key=lambda sub: (
+                -self._metadata_score(sub),
+                self.SOURCE_PRIORITY.get(sub.get("source") or "", 99),
+                str(sub.get("id") or sub.get("url") or ""),
+            )
+        )
         return all_subs
 
 

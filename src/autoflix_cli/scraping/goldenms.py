@@ -1,6 +1,8 @@
 from curl_cffi import requests as cffi_requests
 import urllib.parse
+from urllib.parse import urlparse
 from .config import portals
+from ..app import diagnostics
 from ..proxy import DNS_OPTIONS
 
 scraper = cffi_requests.Session(impersonate="chrome", curl_options=DNS_OPTIONS)
@@ -24,7 +26,11 @@ class MediaExtractor:
         self.xpass_api = portals.get("xpass", "https://play.xpass.top")
 
         # --- Referers ---
-        self.videasy_referer = portals.get("videasy-referer", "https://cineby.gd")
+        self.videasy_referer = portals.get(
+            "videasy-referer", "https://player.videasy.net"
+        )
+        if "cineby.gd" in self.videasy_referer:
+            self.videasy_referer = "https://player.videasy.net"
         self.hexa_referer = portals.get("hexa-referer", "https://hexa.su/")
 
         self.headers = {"Connection": "keep-alive"}
@@ -32,25 +38,112 @@ class MediaExtractor:
     def _quote(self, text):
         return urllib.parse.quote(text).replace("+", "%20")
 
-    def search_videasy(
-        self, title, tmdb_id=None, imdb_id=None, year=None, season=None, episode=None
-    ):
-        """Extraction via Videasy (Multi-server)."""
-        headers = {
+    def _videasy_headers(self):
+        return {
             "Accept": "*/*",
             "User-Agent": scraper.headers.get("User-Agent", "Mozilla/5.0"),
             "Origin": self.videasy_referer,
             "Referer": self.videasy_referer + "/",
         }
 
+    def _subtitle_url_from_item(self, item):
+        if not isinstance(item, dict):
+            return ""
+        for key in ("url", "file", "src", "uri", "href"):
+            value = item.get(key)
+            if isinstance(value, str) and value.startswith(("http://", "https://")):
+                return value
+        return ""
+
+    def _item_declares_subtitle(self, item, url):
+        if not isinstance(item, dict):
+            return False
+        for key in ("kind", "type", "category", "format", "mimeType", "contentType"):
+            value = str(item.get(key) or "").lower()
+            if any(marker in value for marker in ("subtitle", "caption", "vtt", "srt")):
+                return True
+        parsed = urlparse(url)
+        path = (parsed.path or "").lower()
+        return path.endswith((".vtt", ".srt", ".ass", ".ssa")) or any(
+            marker in path for marker in ("subtitle", "caption", "/sub/")
+        )
+
+    def _normalize_videasy_subtitle(self, item, forced=False):
+        url = self._subtitle_url_from_item(item)
+        if not url:
+            return None
+        if not forced and not self._item_declares_subtitle(item, url):
+            return None
+
+        lang = ""
+        for key in ("lang", "language", "lang_code", "srclang", "locale"):
+            if item.get(key):
+                lang = str(item.get(key)).strip()
+                break
+
+        label = ""
+        for key in ("label", "name", "title"):
+            if item.get(key):
+                label = str(item.get(key)).strip()
+                break
+
+        normalized = {"url": url}
+        if lang:
+            normalized["lang"] = lang
+        if label:
+            normalized["label"] = label
+        normalized["subtitle_source"] = "videasy_api"
+        return normalized
+
+    def _extract_videasy_subtitles(self, data):
+        subtitles = []
+        seen_urls = set()
+
+        def visit(value, forced=False, key_hint=""):
+            key_lower = str(key_hint or "").lower()
+            child_forced = forced or any(
+                marker in key_lower
+                for marker in ("subtitle", "caption", "texttrack", "text_track")
+            )
+            if isinstance(value, dict):
+                normalized = self._normalize_videasy_subtitle(value, forced=child_forced)
+                if normalized and normalized["url"] not in seen_urls:
+                    seen_urls.add(normalized["url"])
+                    subtitles.append(normalized)
+                for key, child in value.items():
+                    visit(child, child_forced, key)
+            elif isinstance(value, list):
+                for child in value[:100]:
+                    visit(child, child_forced, key_hint)
+
+        visit(data)
+        return subtitles
+
+    def _log_videasy_api_response(self, server, data, subtitles):
+        keys = list(data.keys())[:24] if isinstance(data, dict) else []
+        diagnostics.info(
+            "PROVIDER",
+            "videasy_api_response",
+            provider="GoldenMS",
+            server=server,
+            keys=keys,
+            has_subtitles=bool(subtitles),
+            subtitle_sample=subtitles[0] if subtitles else {},
+        )
+
+    def search_videasy(
+        self, title, tmdb_id=None, imdb_id=None, year=None, season=None, episode=None
+    ):
+        """Extraction via Videasy (Multi-server)."""
+        headers = self._videasy_headers()
+
         servers = [
+            "cdn",
             "myflixerzupcloud",
-            "1movies",
             "moviebox",
             "primewire",
             "m4uhd",
             "hdmovie",
-            "cdn",
             "primesrcme",
         ]
         results = []
@@ -89,11 +182,11 @@ class MediaExtractor:
 
                 if r_dec.status_code == 200:
                     data = r_dec.json().get("result", {})
+                    if not isinstance(data, dict):
+                        data = {}
                     sources = data.get("sources", [])
-                    subs = [
-                        {"lang": s.get("language"), "url": s.get("url")}
-                        for s in data.get("subtitles", [])
-                    ]
+                    subs = self._extract_videasy_subtitles(data)
+                    self._log_videasy_api_response(server, data, subs)
 
                     for src in sources:
                         results.append(
@@ -106,10 +199,14 @@ class MediaExtractor:
                                     if ".m3u8" in src.get("url", "").lower()
                                     else "VIDEO"
                                 ),
-                                "subtitles": subs if subs else None,
-                                "headers": headers,
+                                "subtitles": subs,
+                                "subtitle_source": "videasy_api" if subs else None,
+                                "headers": dict(headers),
+                                "stream_context": "videasy",
                             }
                         )
+                    if server == "cdn" and results:
+                        return results
             except:
                 continue
         return results
@@ -354,18 +451,21 @@ class MediaExtractor:
         year=None,
         season=None,
         episode=None,
+        include_videasy=False,
     ):
         """Main search method."""
         results = []
 
-        # Priority: Vidlink, Hexa, Xpass, Mapple, Videasy
+        # Priority: Vidlink, Hexa, Xpass, Mapple.
+        # Videasy is kept as a helper/debug extractor but is not exposed by
+        # the normal GoldenMS playback flow anymore.
         if tmdb_id:
             results.extend(self.search_vidlink(tmdb_id, season, episode))
             results.extend(self.search_hexa(tmdb_id, season, episode))
             results.extend(self.search_xpass(tmdb_id, season, episode))
             results.extend(self.search_mapple(tmdb_id, season, episode))
 
-        if title:
+        if include_videasy and title:
             results.extend(
                 self.search_videasy(title, tmdb_id, imdb_id, year, season, episode)
             )

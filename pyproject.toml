@@ -1,10 +1,10 @@
 [project]
 name = "autoflix-cli"
-version = "0.5.4"
+version = "0.6.3"
 description = "Watch movies, series, and anime in multiple languages (FR, EN, and more) directly from your terminal."
 readme = "README.md"
 requires-python = ">=3.9.2"
-license = {text = "WGPLv3"}
+license = {text = "GPL-3.0"}
 license-files = ["LICENSE"]
 authors = [{name = "PaulExplorer"}]
 keywords = ["autoflix", "anime", "movies", "series", "VF", "VOSTFR"]
@@ -21,6 +21,9 @@ dependencies = [
     "platformdirs>=4.0.0",
     "pycryptodome>=3.23.0",
     "m3u8>=6.0.0",
+    "Pillow>=11.0.0",
+    "pywebview>=5.4",
+    "pystray>=0.19.5",
 ]
 
 # Project URLs
@@ -30,6 +33,7 @@ Repository = "https://github.com/PaulExplorer/autoflix-cli.git"
 
 [project.scripts]
 autoflix = "autoflix_cli.main:main"
+autoflix-desktop = "autoflix_cli.desktop:main"
 
 [build-system]
 requires = ["hatchling"]

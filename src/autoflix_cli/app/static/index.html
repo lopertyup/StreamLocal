@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoFlix</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260509-subtitles-lazy">
+  <script defer src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script defer src="/assets/app.js?v=20260509-subtitles-lazy"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">A</span>
+        <span>AutoFlix</span>
+      </div>
+      <nav class="nav-list" aria-label="Navigation principale">
+        <button class="nav-button active" data-view="home" type="button">Accueil</button>
+        <button class="nav-button" data-view="scans" type="button">Manga</button>
+        <button class="nav-button" data-view="favorites" type="button">Favoris</button>
+        <button class="nav-button" data-view="tracking" type="button">À suivre</button>
+        <button class="nav-button" data-view="history" type="button">Historique</button>
+        <button class="nav-button" data-view="downloads" type="button">Téléchargements <span id="downloads-badge" class="nav-badge hidden"></span></button>
+        <button class="nav-button" data-view="settings" type="button">Réglages</button>
+      </nav>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <form id="search-form" class="search-form">
+          <input id="search-input" type="search" autocomplete="off" placeholder="Rechercher un anime, film ou série">
+          <select id="provider-filter" aria-label="Provider">
+            <option value="all">Tous</option>
+          </select>
+          <select id="type-filter" aria-label="Type">
+            <option value="all">Tout</option>
+            <option value="anime">Anime</option>
+            <option value="movie">Films</option>
+            <option value="series">Séries</option>
+            <option value="manga">Manga</option>
+          </select>
+          <button class="primary-button" type="submit">Rechercher</button>
+        </form>
+      </header>
+
+      <main id="app" class="content" tabindex="-1"></main>
+    </section>
+  </div>
+
+  <section id="player-view" class="player-view hidden" aria-label="Lecteur">
+    <div class="player-header">
+      <div>
+        <p class="eyebrow">Lecture</p>
+        <h1 id="player-title">AutoFlix</h1>
+      </div>
+      <div class="player-actions">
+        <div class="quality-control">
+          <button id="quality-toggle" class="secondary-button" type="button" aria-haspopup="menu" aria-expanded="false">Qualité: Auto</button>
+          <div id="quality-menu" class="quality-menu hidden" role="menu"></div>
+        </div>
+        <div class="subtitle-control">
+          <button id="subtitle-toggle" class="secondary-button" type="button" aria-haspopup="menu" aria-expanded="false" disabled>Sous-titres: Off</button>
+          <div id="subtitle-menu" class="subtitle-menu hidden" role="menu"></div>
+        </div>
+        <button id="download-current" class="secondary-button" type="button">Télécharger</button>
+        <button id="mark-watched" class="secondary-button" type="button">Marquer vu</button>
+        <button id="next-episode" class="secondary-button" type="button" disabled>Episode suivant</button>
+        <button id="player-close" class="secondary-button" type="button">Fermer</button>
+      </div>
+    </div>
+    <video id="video-player" controls playsinline></video>
+    <div id="resume-modal" class="resume-modal hidden" role="dialog" aria-modal="true" aria-labelledby="resume-modal-title">
+      <div class="resume-dialog">
+        <h2 id="resume-modal-title">Reprendre la lecture ?</h2>
+        <p id="resume-modal-position"></p>
+        <div class="resume-actions">
+          <button class="primary-button" type="button" data-resume-choice="resume">Reprendre</button>
+          <button class="secondary-button" type="button" data-resume-choice="restart">Recommencer</button>
+        </div>
+      </div>
+    </div>
+    <div id="subtitle-calibration" class="subtitle-calibration hidden" aria-live="polite">
+      <button id="subtitle-calibration-start" class="secondary-button" type="button">Caler ST</button>
+      <div id="subtitle-calibration-confirm" class="subtitle-calibration-confirm hidden">
+        <span id="subtitle-calibration-offset"></span>
+        <button id="subtitle-calibration-validate" class="tiny-button" type="button">Valider</button>
+        <button id="subtitle-calibration-cancel" class="tiny-button" type="button">Annuler</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+</body>
+</html>

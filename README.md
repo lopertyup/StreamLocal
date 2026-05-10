@@ -1,79 +1,179 @@
-# Autoflix 🍿
+# AutoFlix CLI
 
-> Watch movies, series, and anime in **multiple languages** (FR, EN, and more) directly from your terminal.
+AutoFlix is a Python CLI and desktop app for searching movies, series, anime,
+and scan/manga chapters from supported providers. It resolves playable sources,
+uses a local proxy for HLS/MP4 playback, and can launch streams in a browser,
+mpv, VLC, or the built-in desktop player.
 
-**Autoflix** is a CLI inspired by `ani-cli`. Originally focused on French content, it has evolved into a multi-language streaming tool. It scrapes links from various providers to let you stream content without ads or a browser.
+The app stores user preferences and history locally. No account is required.
+AniList integration is optional and only uses a token provided by the user at
+runtime.
 
-> ⚠️ **Warning:** This project was developed very quickly with heavy use of AI. The main goal was functionality over code cleanliness or optimization. I apologize for the "spaghetti code", I just wanted it to work!
+## Features
 
-## ✨ Features
+- Interactive terminal mode with provider search and playback.
+- Desktop UI with search, history, favorites, scan reader, tracking, and downloads.
+- Local HLS/MP4 proxy for stream playback and range requests.
+- Optional AniList progress sync and media mapping.
+- Optional FFmpeg-backed downloads from the desktop UI.
+- Windows tray mode, background startup, and Windows executable build support.
 
-- 🌍 **Multi-language support:** Now supports French and English.
-- 🚀 **Easily extendable:** The architecture allows adding new languages and providers with ease.
-- 🎬 **Massive Library:**
-  - **French (VF & VOSTFR):** Reliable sources like **Coflix**, **French-Stream**, and **Anime‑Sama**.
-  - **English & Global:** A huge variety of sources (VidSrc, etc.) providing access to almost any movie or series.
-- ⛩️ **Anime:** Latest episodes from dedicated providers.
-- 🚫 **No ads, no trackers.**
-- ⚡ **Lightweight and fast.**
+## Requirements
 
-## 🚀 Installation
+- Python 3.9.2 or newer.
+- `uv` recommended for development and reproducible installs.
+- A media player such as mpv, VLC, or a browser.
+- FFmpeg in `PATH` if you want to use desktop downloads.
 
-### With **uv** (recommended)
+## Install From Source
 
-```bash
+```powershell
+git clone https://github.com/PaulExplorer/autoflix-cli.git
+cd autoflix-cli
+uv sync
+```
+
+Run without installing globally:
+
+```powershell
+uv run autoflix
+uv run autoflix-desktop
+```
+
+With pip:
+
+```powershell
+python -m pip install .
+autoflix
+autoflix-desktop
+```
+
+If the package is published on PyPI, you can also install it as a tool:
+
+```powershell
 uv tool install autoflix-cli
 ```
 
-### With **pip**
+## Usage
 
-```bash
-pip install autoflix-cli
-```
+CLI:
 
-> **Note:** You need an external media player such as **MPV**, **VLC** or **a browser** installed.
-
-## 💻 Usage
-
-```bash
+```powershell
 autoflix
 ```
 
-1. Select your preferred **language**.
-2. Select a **provider**.
-3. Search for a title.
-4. Choose a stream and launch it with your preferred player.
+Desktop UI:
 
-## 🛠️ Development
-
-```bash
-# Clone the repository
-git clone https://github.com/PaulExplorer/autoflix-cli.git
-cd autoflix-cli
-
-# Install in editable mode
-pip install -e .
+```powershell
+autoflix-desktop
+autoflix-desktop --browser
+autoflix-desktop --background
+autoflix-desktop --serve-only
 ```
 
-## 📚 Credits
+`--background` starts AutoFlix hidden in the Windows tray so tracking and
+downloads can keep running. `--serve-only` starts only the local server and
+prints the URL.
 
-This project uses logic and inspiration from several open-source projects:
+## Configuration And Data
 
-- [CineStream (CSX)](https://github.com/SaurabhKaperwan/CSX) by [SaurabhKaperwan](https://github.com/SaurabhKaperwan) - Major inspiration for the multi-provider architecture and English stream extraction.
-- [Anime-Sama-Downloader](https://github.com/SertraFurr/Anime-Sama-Downloader) by [SertraFurr](https://github.com/SertraFurr) - Implementation of the `embed4me` stream extraction.
-- [cloudstream-extensions-phisher](https://github.com/phisher98/cloudstream-extensions-phisher) by [phisher98](https://github.com/phisher98) - Implementation of the `Veev` stream extraction.
+Project configuration files live in `data/` and provide default provider URLs
+and player extraction settings. User state is stored in the operating system
+user-data directory through `platformdirs`; it is not meant to be committed.
 
-## 📜 License
+Local user data can include:
 
-This project is licensed under the GPL-3 License.
+- watch history and resume data;
+- language and player preferences;
+- favorites, downloads, tracking settings, and notifications;
+- AniList token and AniList mappings if the user enables AniList.
 
-## ⚠️ Disclaimer
+Never commit local runtime files, logs, `.env` files, or user-data JSON files.
 
-This notice is to inform you that **Autoflix** functions strictly as an automated search tool and specialized browser. It fetches video file metadata and links from the internet in a manner similar to any standard web browser.
+## AniList
 
-- **No Hosting:** Autoflix does not host, store, or distribute any media files or copyrighted content. All content accessed through this tool is hosted by independent third-party websites.
-- **DMCA Compliance:** This software does not violate the provisions of the Digital Millennium Copyright Act (DMCA) as it only provides access to publicly available links and does not store copies of any content on its own servers.
-- **User Responsibility:** The use of this software and the legality of streaming content are the sole responsibility of the user, based on their respective country's or state's laws.
-- **Copyright Holders:** If you believe any content accessed through this tool violates your intellectual property, please contact the **actual file hosts** or the websites providing the streams, as the developers of this repository have no control over or access to the hosted content.
+AniList support is optional. Add a token from the desktop settings or CLI
+settings only on your own machine. The repository must not contain real AniList
+tokens, authorization headers, cookies, or API keys.
 
-_This project is for educational purposes only._
+## Build The Windows Executable
+
+The repository keeps only the build sources:
+
+- `build/build.bat`
+- `build/autoflix.spec`
+- `build/launcher.py`
+- `build/autoflix.ico`
+- `build/make_icon.py`
+
+Build:
+
+```powershell
+build\build.bat
+```
+
+The generated executable is written to `dist\AutoFlix.exe`. Generated `dist/`
+and PyInstaller work directories are ignored by Git.
+
+## Development
+
+Install dependencies and run checks:
+
+```powershell
+uv sync
+uv run python -m compileall src
+uv run --with pytest python -m pytest
+```
+
+Run the app from the source tree:
+
+```powershell
+uv run autoflix
+uv run autoflix-desktop
+```
+
+To add a scan or manga provider, see
+`docs/scan-provider-implementation.md`.
+
+## Project Layout
+
+```text
+src/autoflix_cli/
+  main.py              CLI entry point
+  desktop.py           desktop launcher
+  proxy.py             local playback proxy
+  tracker.py           CLI local state
+  handlers/            CLI provider handlers
+  scraping/            provider scrapers and player extraction
+  app/                 desktop Flask API and static UI
+data/                  public default provider configuration
+docs/                  developer notes
+build/                 Windows packaging sources
+tests/                 automated tests
+```
+
+## Security
+
+Do not publish secrets or private runtime data. Before opening a pull request or
+publishing a fork, search for:
+
+```text
+token
+secret
+password
+api_key
+authorization
+cookie
+local user paths
+```
+
+## License
+
+This project is licensed under GPL-3.0. See `LICENSE`.
+
+## Disclaimer
+
+AutoFlix is a personal-use tool that indexes third-party websites. Provider
+availability, URLs, and playback behavior can change at any time. Use the
+software only where you have the right to access the content, and respect the
+laws and terms that apply in your jurisdiction.

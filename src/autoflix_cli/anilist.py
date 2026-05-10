@@ -58,12 +58,15 @@ class AniListClient:
             return data["Viewer"]
         return None
 
-    def search_media(self, search: str) -> List[Dict[str, Any]]:
+    def search_media(self, search: str, media_type: str = "ANIME") -> List[Dict[str, Any]]:
         """Search for an anime/manga by title."""
+        media_type = str(media_type or "ANIME").upper()
+        if media_type not in {"ANIME", "MANGA"}:
+            media_type = "ANIME"
         query = """
-        query ($search: String) {
+        query ($search: String, $type: MediaType) {
             Page(page: 1, perPage: 10) {
-                media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+                media(search: $search, type: $type, sort: SEARCH_MATCH) {
                     id
                     title {
                         romaji
@@ -75,13 +78,14 @@ class AniListClient:
                     }
                     format
                     episodes
+                    chapters
                     status
                     seasonYear
                 }
             }
         }
         """
-        variables = {"search": search}
+        variables = {"search": search, "type": media_type}
         data = self._query(query, variables)
         if data and data.get("Page") and data.get("Page", {}).get("media"):
             return data["Page"]["media"]
@@ -200,6 +204,72 @@ class AniListClient:
         data = self._query(query, variables)
         if data and data.get("Media"):
             return data["Media"]
+        return None
+
+    def get_airing_info(self, media_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch airing info, status, episode count, and titles for a media."""
+        query = """
+        query ($mediaId: Int) {
+            Media(id: $mediaId) {
+                id
+                title {
+                    romaji
+                    english
+                    native
+                }
+                status
+                episodes
+                duration
+                format
+                seasonYear
+                coverImage {
+                    medium
+                    large
+                }
+                nextAiringEpisode {
+                    episode
+                    timeUntilAiring
+                    airingAt
+                }
+                airingSchedule(notYetAired: false, perPage: 1) {
+                    nodes {
+                        episode
+                        airingAt
+                    }
+                }
+            }
+        }
+        """
+        variables = {"mediaId": int(media_id)}
+        data = self._query(query, variables)
+        if data and data.get("Media"):
+            return data["Media"]
+        return None
+
+    @staticmethod
+    def last_aired_episode(media: Dict[str, Any]) -> Optional[int]:
+        """Best-effort estimate of the last aired episode."""
+        if not media:
+            return None
+        next_ep = media.get("nextAiringEpisode") or {}
+        if next_ep.get("episode"):
+            try:
+                return max(0, int(next_ep["episode"]) - 1)
+            except (TypeError, ValueError):
+                pass
+        schedule_nodes = (media.get("airingSchedule") or {}).get("nodes") or []
+        if schedule_nodes:
+            try:
+                return int(schedule_nodes[0].get("episode") or 0) or None
+            except (TypeError, ValueError):
+                pass
+        if (media.get("status") or "").upper() == "FINISHED":
+            episodes = media.get("episodes")
+            if episodes:
+                try:
+                    return int(episodes)
+                except (TypeError, ValueError):
+                    pass
         return None
 
 

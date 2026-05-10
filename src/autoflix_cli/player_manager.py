@@ -110,6 +110,7 @@ def play_video(
     subtitle_url: str = None,
     is_direct: bool = False,
     is_mp4: bool = False,
+    stream_context: str = "",
 ) -> bool:
     """
     Attempt to play a video with the chosen player.
@@ -164,6 +165,10 @@ def play_video(
         return False
 
     print_success(f"Stream URL: [cyan]{stream_url}[/cyan]")
+    proxy_context = str(stream_context or "").strip().lower()
+    context_param = (
+        f"&context={urllib.parse.quote(proxy_context)}" if proxy_context else ""
+    )
 
     local_subtitle_path = subtitle_url
     if subtitle_url and subtitle_url.startswith("http"):
@@ -272,7 +277,10 @@ def play_video(
             if ("ext" in player_config and player_config["ext"] == "mp4") or is_mp4:
                 endpoint = "video"
 
-            local_stream_url = f"{proxy.PROXY_URL}/{endpoint}?url={encoded_url}&headers={encoded_headers}"
+            local_stream_url = (
+                f"{proxy.PROXY_URL}/{endpoint}"
+                f"?url={encoded_url}&headers={encoded_headers}{context_param}"
+            )
 
             encoded_local_stream_url = urllib.parse.quote(local_stream_url)
             browser_player_url = (
@@ -354,7 +362,10 @@ def play_video(
             if ("ext" in player_config and player_config["ext"] == "mp4") or is_mp4:
                 endpoint = "video"
 
-            local_stream_url = f"{proxy.PROXY_URL}/{endpoint}?url={encoded_url}&headers={encoded_headers}"
+            local_stream_url = (
+                f"{proxy.PROXY_URL}/{endpoint}"
+                f"?url={encoded_url}&headers={encoded_headers}{context_param}"
+            )
 
             try:
                 cmd = [player_executable, local_stream_url]
