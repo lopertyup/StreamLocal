@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from autoflix_cli.app import autostart
 from autoflix_cli.app.server import create_app
-from autoflix_cli.app.store import DesktopStore
+from autoflix_cli.app.store import APP_NAME, DesktopStore
 from autoflix_cli.desktop import DesktopRuntime, SingleInstanceManager, TrayController
 
 
@@ -52,7 +52,7 @@ def test_windows_autostart_registry_create_and_delete(monkeypatch):
     monkeypatch.setitem(sys.modules, "winreg", fake_winreg)
 
     assert autostart.set_start_with_windows(True, command=r"C:\AutoFlix.exe --background") is True
-    assert fake_winreg.values == {"AutoFlix": r"C:\AutoFlix.exe --background"}
+    assert fake_winreg.values == {autostart.RUN_VALUE_NAME: r"C:\AutoFlix.exe --background"}
     assert fake_winreg.opened[-1][1] == autostart.RUN_KEY
 
     assert autostart.set_start_with_windows(False) is True
@@ -241,7 +241,7 @@ def test_tray_menu_opens_window_and_quits_runtime(monkeypatch):
     assert controller.start() is True
     icon = FakeIcon.instances[-1]
 
-    assert [item.text for item in icon.menu.items] == ["Ouvrir AutoFlix", "Quitter"]
+    assert [item.text for item in icon.menu.items] == [f"Ouvrir {APP_NAME}", "Quitter"]
     assert icon.menu.items[0].default is True
     assert icon.started is True
 

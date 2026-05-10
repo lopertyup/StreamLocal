@@ -17,7 +17,7 @@ from typing import Callable, Optional
 from . import proxy
 from .app import autostart, diagnostics
 from .app.server import LocalAppServer, create_app
-from .app.store import DesktopStore
+from .app.store import APP_ID, APP_NAME, DesktopStore
 
 
 def _project_version() -> str:
@@ -290,7 +290,7 @@ class SingleInstanceManager:
 class TrayController:
     def __init__(
         self,
-        title: str = "AutoFlix",
+        title: str = APP_NAME,
         on_quit: Optional[Callable[[], None]] = None,
         minimize_to_tray: bool = True,
     ) -> None:
@@ -315,10 +315,10 @@ class TrayController:
 
         self._pystray = pystray
         menu = pystray.Menu(
-            pystray.MenuItem("Ouvrir AutoFlix", self._open_from_menu, default=True),
+            pystray.MenuItem(f"Ouvrir {self.title}", self._open_from_menu, default=True),
             pystray.MenuItem("Quitter", self._quit_from_menu),
         )
-        self.icon = pystray.Icon("AutoFlix", image, self.title, menu)
+        self.icon = pystray.Icon(APP_ID, image, self.title, menu)
         try:
             if hasattr(self.icon, "run_detached"):
                 self.icon.run_detached()
@@ -442,7 +442,7 @@ def _wait_forever() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Lance AutoFlix Desktop.")
+    parser = argparse.ArgumentParser(description=f"Lance {APP_NAME} Desktop.")
     parser.add_argument(
         "--browser",
         action="store_true",
@@ -535,14 +535,14 @@ def main() -> None:
             )
 
         if args.serve_only:
-            print(f"AutoFlix Desktop: {url}", flush=True)
+            print(f"{APP_NAME} Desktop: {url}", flush=True)
             if args.dev:
                 diagnostics.info("BROWSER", "skip", status="ok", reason="--serve-only")
             _wait_forever()
 
         elif args.browser and not args.background:
             opened = webbrowser.open(url)
-            print(f"AutoFlix Desktop: {url}")
+            print(f"{APP_NAME} Desktop: {url}")
             if args.dev:
                 diagnostics.info(
                     "BROWSER",
@@ -581,7 +581,7 @@ def main() -> None:
 
             desktop_api = DesktopApi()
             window = webview.create_window(
-                "AutoFlix",
+                APP_NAME,
                 url,
                 width=1280,
                 height=820,

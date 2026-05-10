@@ -20,7 +20,7 @@ from . import diagnostics
 from .encoding import decode_payload
 from .models import ProviderError
 from .playback import prepare_playback
-from .store import DesktopStore
+from .store import APP_ID, DesktopStore
 
 
 _INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -558,4 +558,4 @@ class DownloadManager:
 
 def _default_dir() -> str:
     home = Path.home()
-    return str(home / "Videos" / "AutoFlix")
+    return str(home / "Videos" / APP_ID)

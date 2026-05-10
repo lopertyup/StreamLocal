@@ -6,20 +6,15 @@ const state = {
   currentPlayback: null,
   currentEpisodeContext: null,
   pendingResumeChoice: null,
-  mangaResults: [],
-  mangaQuery: "",
-  mangaProgress: [],
-  mangaReader: null,
-  mangaObserver: null,
-  mangaProgressSentAt: 0,
-  mangaAutosaveTimer: null,
-  mangaRestoringScroll: false,
   appFullscreenMode: null,
   videoFullscreenPromoting: false,
+  videoFullscreenToggleAt: 0,
   scanProviders: [],
   scanResults: [],
   scanDetails: null,
   scanReader: null,
+  scanPan: null,
+  scanSuppressClick: false,
   scanQuery: "",
   scanProvider: "all",
   scanLanguage: "fr",
@@ -68,6 +63,11 @@ const downloadsBadge = document.getElementById("downloads-badge");
 
 const PLAYER_VOLUME_KEY = "autoflix.player.volume";
 const PLAYER_MUTED_KEY = "autoflix.player.muted";
+const SCAN_READER_MIN_ZOOM = 1;
+const SCAN_READER_MAX_ZOOM = 3;
+const SCAN_READER_ZOOM_STEP = 0.25;
+const SCAN_READER_PAN_THRESHOLD = 5;
+const VIDEO_FULLSCREEN_TOGGLE_GUARD_MS = 350;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -139,10 +139,6 @@ function fullscreenOwner(element) {
   return Boolean(active && element && (active === element || element.contains(active)));
 }
 
-function mangaFullscreenStage() {
-  return document.querySelector(".manga-reader-stage");
-}
-
 function scanFullscreenStage() {
   return document.querySelector(".scan-reader-stage");
 }
@@ -157,13 +153,9 @@ function appFullscreenActive(mode = null) {
 
 function syncAppFullscreenClasses() {
   const mode = state.appFullscreenMode;
-  const mangaMode = mode === "manga" ? state.mangaReader?.mode || "scroll" : null;
   const scanMode = mode === "scan" ? state.scanReader?.mode || "vertical" : null;
   document.body.classList.toggle("app-fullscreen-active", Boolean(mode));
   document.body.classList.toggle("app-video-fullscreen", mode === "video");
-  document.body.classList.toggle("app-manga-fullscreen", mode === "manga");
-  document.body.classList.toggle("app-manga-page-fullscreen", mangaMode === "page");
-  document.body.classList.toggle("app-manga-scroll-fullscreen", mangaMode === "scroll");
   document.body.classList.toggle("app-scan-fullscreen", mode === "scan");
   document.body.classList.toggle("app-scan-single-fullscreen", scanMode === "single");
   document.body.classList.toggle("app-scan-vertical-fullscreen", scanMode === "vertical");
@@ -238,31 +230,23 @@ async function enterAppFullscreen(mode) {
   }
 
   const previousMode = state.appFullscreenMode;
-  const mangaScrollAnchor = mode === "manga" && state.mangaReader?.mode !== "page"
-    ? captureMangaScrollAnchor()
-    : null;
   const scanScrollAnchor = mode === "scan" && state.scanReader?.mode !== "single"
     ? captureScanScrollAnchor()
     : null;
-  state.mangaRestoringScroll = Boolean(mangaScrollAnchor);
   state.scanRestoringScroll = Boolean(scanScrollAnchor);
   applyAppFullscreenMode(mode);
-  restoreMangaScrollAnchor(mangaScrollAnchor);
   restoreScanScrollAnchor(scanScrollAnchor);
 
   const enabled = await setNativeAppFullscreen(true);
   if (!enabled) {
     applyAppFullscreenMode(previousMode);
-    restoreMangaScrollAnchor(mangaScrollAnchor);
     restoreScanScrollAnchor(scanScrollAnchor);
-    state.mangaRestoringScroll = false;
     state.scanRestoringScroll = false;
     return;
   }
 
-  if (mangaScrollAnchor || scanScrollAnchor) {
+  if (scanScrollAnchor) {
     window.setTimeout(() => {
-      state.mangaRestoringScroll = false;
       state.scanRestoringScroll = false;
     }, 250);
   }
@@ -272,34 +256,24 @@ async function exitAppFullscreen(options = {}) {
   const previousMode = state.appFullscreenMode;
   if (!previousMode && !fullscreenElement()) return;
 
-  const mangaScrollAnchor = previousMode === "manga" && state.mangaReader?.mode !== "page"
-    ? captureMangaScrollAnchor()
-    : null;
   const scanScrollAnchor = previousMode === "scan" && state.scanReader?.mode !== "single"
     ? captureScanScrollAnchor()
     : null;
-  state.mangaRestoringScroll = Boolean(mangaScrollAnchor);
   state.scanRestoringScroll = Boolean(scanScrollAnchor);
   applyAppFullscreenMode(null);
 
   if (!options.skipNative) {
     await setNativeAppFullscreen(false);
   }
-  restoreMangaScrollAnchor(mangaScrollAnchor);
   restoreScanScrollAnchor(scanScrollAnchor);
-  if (mangaScrollAnchor || scanScrollAnchor) {
+  if (scanScrollAnchor) {
     window.setTimeout(() => {
-      state.mangaRestoringScroll = false;
       state.scanRestoringScroll = false;
     }, 250);
   }
 }
 
 function updateFullscreenButtons() {
-  const mangaIsFullscreen = appFullscreenActive("manga") || fullscreenOwner(mangaFullscreenStage());
-  document.querySelectorAll("[data-manga-fullscreen]").forEach((button) => {
-    button.textContent = mangaIsFullscreen ? "Quitter plein écran" : "Plein écran";
-  });
   const scanIsFullscreen = appFullscreenActive("scan") || fullscreenOwner(scanFullscreenStage());
   document.querySelectorAll("[data-reader-fullscreen]").forEach((button) => {
     button.textContent = scanIsFullscreen ? "Quitter plein écran" : "Plein écran";
@@ -366,10 +340,6 @@ function imageHtml(src, alt, className = "poster") {
   }
   const initial = escapeHtml((alt || "A").trim().slice(0, 1).toUpperCase());
   return `<div class="${className} poster-fallback">${initial}</div>`;
-}
-
-function mangaImageUrl(url) {
-  return `/api/manga/image?url=${encodeURIComponent(url || "")}`;
 }
 
 function labelType(type) {
@@ -561,381 +531,6 @@ async function runSearch() {
   }
 }
 
-function clearMangaReaderRuntime() {
-  disconnectMangaObserver();
-  if (state.mangaAutosaveTimer) {
-    window.clearInterval(state.mangaAutosaveTimer);
-    state.mangaAutosaveTimer = null;
-  }
-}
-
-async function showMangaView() {
-  setActiveView("manga");
-  clearMangaReaderRuntime();
-  state.mangaReader = null;
-  app.innerHTML = `<div class="loading-state">Chargement</div>`;
-  try {
-    const progress = await api("/api/manga/progress");
-    state.mangaProgress = progress.progress || [];
-    renderMangaLibrary();
-  } catch (error) {
-    app.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
-  }
-}
-
-function renderMangaLibrary() {
-  app.innerHTML = `
-    <section>
-      <div class="section-header">
-        <div>
-          <p class="eyebrow">Anime-Sama</p>
-          <h1>Manga</h1>
-        </div>
-      </div>
-      <form id="manga-search-form" class="manga-search-form">
-        <input id="manga-search-input" type="search" autocomplete="off" placeholder="Rechercher un manga" value="${escapeHtml(state.mangaQuery)}">
-        <button class="primary-button" type="submit">Rechercher</button>
-      </form>
-    </section>
-    <section>
-      <div class="section-header">
-        <h2>Continuer la lecture</h2>
-      </div>
-      <div class="manga-progress-list">
-        ${(state.mangaProgress || []).slice(0, 6).map(mangaProgressCard).join("") || `<div class="empty-state">Aucune lecture en cours.</div>`}
-      </div>
-    </section>
-    <section>
-      <div class="section-header">
-        <h2>Resultats</h2>
-        <span class="pill">${state.mangaResults.length}</span>
-      </div>
-      <div class="manga-grid">${state.mangaResults.map(mangaCard).join("") || `<div class="empty-state">Recherchez un manga pour commencer.</div>`}</div>
-    </section>
-  `;
-}
-
-function mangaCard(item) {
-  return `
-    <button class="media-card" type="button" data-open-manga="${escapeHtml(item.scan_url)}">
-      ${imageHtml(item.cover_url, item.title)}
-      <div class="card-body">
-        <h3>${escapeHtml(item.title)}</h3>
-        <div class="meta-line">
-          <span>Anime-Sama</span>
-          <span>${escapeHtml((item.languages || ["VF"]).join("/").toUpperCase())}</span>
-        </div>
-      </div>
-    </button>
-  `;
-}
-
-function mangaProgressCard(entry) {
-  return `
-    <button class="manga-progress-card" type="button" data-resume-manga="${escapeHtml(entry.scan_url)}">
-      ${imageHtml(entry.cover_url, entry.title, "history-thumb")}
-      <div>
-        <strong>${escapeHtml(entry.title)}</strong>
-        <div class="meta-line">
-          <span>Chapitre ${escapeHtml(Number(entry.chapter || 0) + 1)}</span>
-          <span>Page ${escapeHtml(Number(entry.page || 0) + 1)}</span>
-        </div>
-      </div>
-      <span class="pill">Reprendre</span>
-    </button>
-  `;
-}
-
-async function runMangaSearch() {
-  const queryInput = document.getElementById("manga-search-input");
-  const query = (queryInput?.value || state.mangaQuery || "").trim();
-  if (!query) {
-    await showMangaView();
-    return;
-  }
-  setActiveView("manga");
-  clearMangaReaderRuntime();
-  state.mangaQuery = query;
-  app.innerHTML = `<div class="loading-state">Recherche</div>`;
-  try {
-    const [search, progress] = await Promise.all([
-      api(`/api/manga/search?q=${encodeURIComponent(query)}`),
-      api("/api/manga/progress").catch(() => ({ progress: [] })),
-    ]);
-    state.mangaResults = search.results || [];
-    state.mangaProgress = progress.progress || [];
-    devLog("manga_search_results", { query, result_count: state.mangaResults.length });
-    renderMangaLibrary();
-  } catch (error) {
-    devLog("manga_search_error", { query, message: error.message }, "error");
-    app.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
-  }
-}
-
-function mangaMetaByUrl(scanUrl) {
-  return (state.mangaResults || []).find((item) => item.scan_url === scanUrl)
-    || (state.mangaProgress || []).find((item) => item.scan_url === scanUrl)
-    || null;
-}
-
-async function openMangaReader(scanUrl, chapter = 0, page = 0) {
-  if (!scanUrl) return;
-  const previousMode = state.mangaReader?.mode || "scroll";
-  clearMangaReaderRuntime();
-  setActiveView("manga");
-  app.innerHTML = `<div class="loading-state">Chargement</div>`;
-  const fallback = mangaMetaByUrl(scanUrl) || {};
-  try {
-    const info = await api(`/api/manga/info?url=${encodeURIComponent(scanUrl)}`).catch(() => ({
-      scan_url: scanUrl,
-      title: fallback.title || "Manga",
-      cover_url: fallback.cover_url || "",
-    }));
-    const chapterPayload = await api(`/api/manga/chapters?url=${encodeURIComponent(info.scan_url || scanUrl)}`);
-    const chapters = chapterPayload.chapters || [];
-    const chapterIndex = Math.max(0, Math.min(Number(chapter) || 0, Math.max(0, chapters.length - 1)));
-    const pages = chapters[chapterIndex] || [];
-    const pageIndex = Math.max(0, Math.min(Number(page) || 0, Math.max(0, pages.length - 1)));
-    state.mangaReader = {
-      scanUrl: info.scan_url || scanUrl,
-      title: info.title || fallback.title || "Manga",
-      coverUrl: info.cover_url || fallback.cover_url || "",
-      chapters,
-      chapterIndex,
-      pageIndex,
-      mode: previousMode,
-    };
-    startMangaAutosave();
-    renderMangaReader();
-    saveMangaProgress(true).catch(() => {});
-  } catch (error) {
-    devLog("manga_reader_error", { url: scanUrl, message: error.message }, "error");
-    app.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
-  }
-}
-
-function startMangaAutosave() {
-  if (state.mangaAutosaveTimer) window.clearInterval(state.mangaAutosaveTimer);
-  state.mangaAutosaveTimer = window.setInterval(() => {
-    saveMangaProgress(true).catch(() => {});
-  }, 30000);
-}
-
-function currentMangaPages() {
-  const reader = state.mangaReader;
-  if (!reader) return [];
-  return reader.chapters[reader.chapterIndex] || [];
-}
-
-function captureMangaScrollAnchor() {
-  if (!state.mangaReader || state.mangaReader.mode === "page") return null;
-  const pages = Array.from(document.querySelectorAll(".manga-page[data-manga-page]"));
-  if (!pages.length) return null;
-  const stage = mangaFullscreenStage();
-  const viewport = appFullscreenActive("manga") && stage
-    ? stage.getBoundingClientRect()
-    : { top: 0, bottom: window.innerHeight };
-  let best = null;
-  pages.forEach((page) => {
-    const rect = page.getBoundingClientRect();
-    const visible = Math.min(rect.bottom, viewport.bottom) - Math.max(rect.top, viewport.top);
-    if (visible <= 0) return;
-    if (!best || visible > best.visible) {
-      best = { page, rect, visible };
-    }
-  });
-  if (!best) return null;
-  return {
-    index: Number(best.page.dataset.mangaPage || 0),
-    offset: Math.max(0, viewport.top - best.rect.top),
-  };
-}
-
-function restoreMangaScrollAnchor(anchor) {
-  if (!anchor) return;
-  window.requestAnimationFrame(() => {
-    const page = document.querySelector(`[data-manga-page="${anchor.index}"]`);
-    if (!page) return;
-    if (appFullscreenActive("manga")) {
-      const stage = mangaFullscreenStage();
-      if (!stage) return;
-      const stageRect = stage.getBoundingClientRect();
-      const pageTop = page.getBoundingClientRect().top - stageRect.top + stage.scrollTop;
-      stage.scrollTop = Math.max(0, pageTop + anchor.offset);
-      return;
-    }
-    const pageTop = page.getBoundingClientRect().top + window.scrollY;
-    window.scrollTo({ top: Math.max(0, pageTop + anchor.offset), behavior: "auto" });
-  });
-}
-
-function renderMangaReader() {
-  const reader = state.mangaReader;
-  if (!reader) return;
-  disconnectMangaObserver();
-  const pages = currentMangaPages();
-  const chapterCount = reader.chapters.length;
-  reader.chapterIndex = Math.max(0, Math.min(reader.chapterIndex || 0, Math.max(0, chapterCount - 1)));
-  reader.pageIndex = Math.max(0, Math.min(reader.pageIndex || 0, Math.max(0, pages.length - 1)));
-  const isPage = reader.mode === "page";
-  const stageUsesScroll = !isPage;
-  syncAppFullscreenClasses();
-  app.innerHTML = `
-    <section class="manga-reader">
-      <header class="manga-nav">
-        <div>
-          <p class="eyebrow">${escapeHtml(reader.title)}</p>
-          <h1>Chapitre ${escapeHtml(reader.chapterIndex + 1)}</h1>
-          <div class="meta-line">
-            <span>${escapeHtml(pages.length ? `${reader.pageIndex + 1}/${pages.length}` : "0 page")}</span>
-            <span>${escapeHtml(chapterCount)} chapitres</span>
-          </div>
-        </div>
-        <div class="reader-actions">
-          <button class="secondary-button" type="button" data-manga-back-library>Bibliotheque</button>
-          <button class="secondary-button" type="button" data-manga-fullscreen>Plein écran</button>
-          <select id="manga-chapter-picker" class="reader-chapter-picker" aria-label="Chapitre">
-            ${reader.chapters.map((chapterPages, index) => `
-              <option value="${index}" ${index === reader.chapterIndex ? "selected" : ""}>
-                Chapitre ${index + 1} (${chapterPages.length} pages)
-              </option>
-            `).join("")}
-          </select>
-          <button class="secondary-button" type="button" data-manga-prev-chapter ${reader.chapterIndex <= 0 ? "disabled" : ""}>Chapitre precedent</button>
-          <button class="secondary-button" type="button" data-manga-next-chapter ${reader.chapterIndex >= chapterCount - 1 ? "disabled" : ""}>Chapitre suivant</button>
-          <button class="${!isPage ? "secondary-button active" : "secondary-button"}" type="button" data-manga-mode="scroll">Scroll</button>
-          <button class="${isPage ? "secondary-button active" : "secondary-button"}" type="button" data-manga-mode="page">Page</button>
-          ${isPage ? `
-            <button class="secondary-button" type="button" data-manga-prev-page ${reader.pageIndex <= 0 ? "disabled" : ""}>Page precedente</button>
-            <button class="secondary-button" type="button" data-manga-next-page ${reader.pageIndex >= pages.length - 1 ? "disabled" : ""}>Page suivante</button>
-          ` : ""}
-        </div>
-      </header>
-      <div class="manga-reader-stage">
-        ${
-          stageUsesScroll
-            ? `<div class="manga-reader-scroll">${pages.map((url, index) => mangaPageHtml(url, index)).join("")}</div>`
-            : `<div class="manga-reader-page">${mangaPageHtml(pages[reader.pageIndex], reader.pageIndex)}</div>`
-        }
-      </div>
-    </section>
-  `;
-  updateFullscreenButtons();
-  if (stageUsesScroll) {
-    setupMangaObserver();
-    if (!appFullscreenActive("manga")) {
-      scrollMangaPageIntoView(reader.pageIndex);
-    }
-  }
-}
-
-function mangaPageHtml(url, index) {
-  if (!url) return `<div class="empty-state">Page indisponible.</div>`;
-  return `
-    <figure class="manga-page" data-manga-page="${index}">
-      <img src="${escapeHtml(mangaImageUrl(url))}" alt="Page ${escapeHtml(index + 1)}" loading="lazy">
-    </figure>
-  `;
-}
-
-function disconnectMangaObserver() {
-  if (state.mangaObserver) {
-    state.mangaObserver.disconnect();
-    state.mangaObserver = null;
-  }
-}
-
-function setupMangaObserver() {
-  if (!("IntersectionObserver" in window)) return;
-  const pages = document.querySelectorAll(".manga-page[data-manga-page]");
-  state.mangaObserver = new IntersectionObserver((entries) => {
-    if (state.mangaRestoringScroll) return;
-    const visible = entries
-      .filter((entry) => entry.isIntersecting)
-      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-    if (!visible || !state.mangaReader) return;
-    const nextIndex = Number(visible.target.dataset.mangaPage || 0);
-    if (Number.isFinite(nextIndex) && nextIndex !== state.mangaReader.pageIndex) {
-      state.mangaReader.pageIndex = nextIndex;
-      saveMangaProgress(false).catch(() => {});
-    }
-  }, { threshold: [0.55, 0.75] });
-  pages.forEach((page) => state.mangaObserver.observe(page));
-}
-
-function scrollMangaPageIntoView(index = state.mangaReader?.pageIndex || 0) {
-  const pageIndex = Math.max(0, Number(index) || 0);
-  if (pageIndex <= 0) return;
-  window.requestAnimationFrame(() => {
-    document.querySelector(`[data-manga-page="${pageIndex}"]`)?.scrollIntoView({ block: "start" });
-  });
-}
-
-function handleMangaPageClick(event) {
-  if (state.mangaReader?.mode !== "page") return false;
-  const stage = event.target.closest(".manga-reader-stage");
-  if (!stage) return false;
-  event.preventDefault();
-  const rect = stage.getBoundingClientRect();
-  moveMangaPage(event.clientX < rect.left + rect.width / 2 ? -1 : 1);
-  return true;
-}
-
-async function saveMangaProgress(force = false) {
-  const reader = state.mangaReader;
-  if (!reader) return;
-  const now = Date.now();
-  if (!force && now - state.mangaProgressSentAt < 30000) return;
-  state.mangaProgressSentAt = now;
-  await api("/api/manga/progress", {
-    method: "POST",
-    body: JSON.stringify({
-      scan_url: reader.scanUrl,
-      title: reader.title,
-      cover_url: reader.coverUrl,
-      chapter: reader.chapterIndex,
-      page: reader.pageIndex,
-      chapter_count: reader.chapters.length,
-      page_count: currentMangaPages().length,
-    }),
-  });
-}
-
-function setMangaReaderMode(mode) {
-  if (!state.mangaReader) return;
-  state.mangaReader.mode = mode === "page" ? "page" : "scroll";
-  renderMangaReader();
-  saveMangaProgress(true).catch(() => {});
-}
-
-function moveMangaPage(delta) {
-  const reader = state.mangaReader;
-  if (!reader) return;
-  const pages = currentMangaPages();
-  reader.mode = "page";
-  reader.pageIndex = Math.max(0, Math.min((reader.pageIndex || 0) + delta, Math.max(0, pages.length - 1)));
-  renderMangaReader();
-  saveMangaProgress(true).catch(() => {});
-}
-
-function moveMangaChapter(delta) {
-  const reader = state.mangaReader;
-  if (!reader) return;
-  reader.chapterIndex = Math.max(0, Math.min((reader.chapterIndex || 0) + delta, Math.max(0, reader.chapters.length - 1)));
-  reader.pageIndex = 0;
-  renderMangaReader();
-  saveMangaProgress(true).catch(() => {});
-}
-
-function selectMangaChapter(index) {
-  const reader = state.mangaReader;
-  if (!reader) return;
-  reader.chapterIndex = Math.max(0, Math.min(Number(index) || 0, Math.max(0, reader.chapters.length - 1)));
-  reader.pageIndex = 0;
-  renderMangaReader();
-  saveMangaProgress(true).catch(() => {});
-}
-
 async function loadScanProviders() {
   if (state.scanProviders.length) return state.scanProviders;
   const payload = await api("/api/scans/providers");
@@ -1122,6 +717,7 @@ async function openScanChapter(chapterId, pageIndex = 0, mode = null) {
   const detail = state.scanDetails;
   if (!detail) return;
   const previousMode = state.scanReader?.mode;
+  const previousZoom = state.scanReader?.zoom;
   disconnectScanObserver();
   app.innerHTML = `<div class="loading-state">Chargement</div>`;
   try {
@@ -1131,6 +727,7 @@ async function openScanChapter(chapterId, pageIndex = 0, mode = null) {
     state.scanReader = {
       mode: mode || previousMode || "vertical",
       pageIndex: Math.max(0, Math.min(Number(pageIndex) || 0, Math.max(0, pages.length - 1))),
+      zoom: clamp(Number(previousZoom) || SCAN_READER_MIN_ZOOM, SCAN_READER_MIN_ZOOM, SCAN_READER_MAX_ZOOM),
       chapter,
       pages,
     };
@@ -1247,6 +844,7 @@ function renderScanReader() {
   const pageCount = reader.pages.length;
   const pageIndex = Math.max(0, Math.min(reader.pageIndex || 0, Math.max(0, pageCount - 1)));
   reader.pageIndex = pageIndex;
+  reader.zoom = clamp(Number(reader.zoom) || SCAN_READER_MIN_ZOOM, SCAN_READER_MIN_ZOOM, SCAN_READER_MAX_ZOOM);
   const isSingle = reader.mode === "single";
   const chapterIndex = currentScanChapterIndex();
   const chapterCount = readableScanChapters().length;
@@ -1277,7 +875,7 @@ function renderScanReader() {
           <button class="primary-button" type="button" data-reader-complete>Termine</button>
         </div>
       </header>
-      <div class="scan-reader-stage">
+      <div class="scan-reader-stage" style="--scan-reader-zoom:${reader.zoom}">
         ${
           isSingle
             ? `<div class="single-page">${singleScanPageHtml(reader.pages[pageIndex])}</div>`
@@ -1287,6 +885,7 @@ function renderScanReader() {
     </section>
   `;
   updateFullscreenButtons();
+  applyScanZoom();
   if (!isSingle) {
     setupScanObserver();
     if (!appFullscreenActive("scan")) {
@@ -1337,11 +936,112 @@ function scrollScanPageIntoView(index = state.scanReader?.pageIndex || 0) {
   });
 }
 
+function scanStageFromEvent(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  return target?.closest(".scan-reader-stage") || null;
+}
+
+function scanFullscreenActive() {
+  const stage = scanFullscreenStage();
+  return Boolean(stage && (appFullscreenActive("scan") || fullscreenOwner(stage)));
+}
+
+function applyScanZoom() {
+  const reader = state.scanReader;
+  const stage = scanFullscreenStage();
+  if (!reader || !stage) return;
+  const zoom = clamp(Number(reader.zoom) || SCAN_READER_MIN_ZOOM, SCAN_READER_MIN_ZOOM, SCAN_READER_MAX_ZOOM);
+  reader.zoom = zoom;
+  stage.style.setProperty("--scan-reader-zoom", String(zoom));
+  stage.classList.toggle("scan-reader-zoomed", zoom > SCAN_READER_MIN_ZOOM);
+}
+
+function setScanZoom(nextZoom, originEvent = null) {
+  const reader = state.scanReader;
+  const stage = scanFullscreenStage();
+  if (!reader || !stage || !scanFullscreenActive()) return;
+  const currentZoom = clamp(Number(reader.zoom) || SCAN_READER_MIN_ZOOM, SCAN_READER_MIN_ZOOM, SCAN_READER_MAX_ZOOM);
+  const zoom = clamp(nextZoom, SCAN_READER_MIN_ZOOM, SCAN_READER_MAX_ZOOM);
+  if (Math.abs(zoom - currentZoom) < 0.001) return;
+
+  const rect = stage.getBoundingClientRect();
+  const pivotX = originEvent ? originEvent.clientX - rect.left : stage.clientWidth / 2;
+  const pivotY = originEvent ? originEvent.clientY - rect.top : stage.clientHeight / 2;
+  const scrollLeft = stage.scrollLeft + pivotX;
+  const scrollTop = stage.scrollTop + pivotY;
+  reader.zoom = zoom;
+  applyScanZoom();
+  window.requestAnimationFrame(() => {
+    const scale = zoom / currentZoom;
+    stage.scrollLeft = Math.max(0, scrollLeft * scale - pivotX);
+    stage.scrollTop = Math.max(0, scrollTop * scale - pivotY);
+  });
+}
+
+function handleScanReaderWheel(event) {
+  const stage = scanStageFromEvent(event);
+  if (!stage || !state.scanReader || !scanFullscreenActive()) return;
+  event.preventDefault();
+  const direction = event.deltaY < 0 ? 1 : -1;
+  const currentZoom = Number(state.scanReader.zoom) || SCAN_READER_MIN_ZOOM;
+  setScanZoom(currentZoom + direction * SCAN_READER_ZOOM_STEP, event);
+}
+
+function handleScanPanStart(event) {
+  if (event.button !== 0 || !state.scanReader) return;
+  const stage = scanStageFromEvent(event);
+  if (!stage || !scanFullscreenActive()) return;
+  state.scanPan = {
+    pointerId: event.pointerId,
+    stage,
+    startX: event.clientX,
+    startY: event.clientY,
+    startScrollLeft: stage.scrollLeft,
+    startScrollTop: stage.scrollTop,
+    dragged: false,
+  };
+  stage.setPointerCapture?.(event.pointerId);
+}
+
+function handleScanPanMove(event) {
+  const pan = state.scanPan;
+  if (!pan || pan.pointerId !== event.pointerId) return;
+  const deltaX = event.clientX - pan.startX;
+  const deltaY = event.clientY - pan.startY;
+  if (!pan.dragged && Math.hypot(deltaX, deltaY) >= SCAN_READER_PAN_THRESHOLD) {
+    pan.dragged = true;
+    pan.stage.classList.add("is-panning");
+  }
+  if (!pan.dragged) return;
+  event.preventDefault();
+  pan.stage.scrollLeft = pan.startScrollLeft - deltaX;
+  pan.stage.scrollTop = pan.startScrollTop - deltaY;
+}
+
+function handleScanPanEnd(event) {
+  const pan = state.scanPan;
+  if (!pan || pan.pointerId !== event.pointerId) return;
+  if (pan.dragged) {
+    event.preventDefault();
+    state.scanSuppressClick = true;
+    window.setTimeout(() => {
+      state.scanSuppressClick = false;
+    }, 250);
+  }
+  pan.stage.releasePointerCapture?.(event.pointerId);
+  pan.stage.classList.remove("is-panning");
+  state.scanPan = null;
+}
+
 function handleScanPageClick(event) {
   if (state.scanReader?.mode !== "single") return false;
-  const stage = event.target.closest(".scan-reader-stage");
+  const stage = scanStageFromEvent(event);
   if (!stage) return false;
   event.preventDefault();
+  if (state.scanSuppressClick) {
+    state.scanSuppressClick = false;
+    return true;
+  }
   const rect = stage.getBoundingClientRect();
   moveScanPage(event.clientX < rect.left + rect.width / 2 ? -1 : 1);
   return true;
@@ -2896,10 +2596,6 @@ document.addEventListener("submit", (event) => {
     event.preventDefault();
     runScanSearch().catch((error) => showToast(error.message));
   }
-  if (event.target.id === "manga-search-form") {
-    event.preventDefault();
-    runMangaSearch().catch((error) => showToast(error.message));
-  }
   if (event.target.id === "settings-form") {
     saveSettings(event).catch((error) => showToast(error.message));
   }
@@ -2909,10 +2605,6 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "reader-chapter-picker") {
     saveScanProgress(false).catch(() => {});
     openScanChapter(event.target.value, 0, state.scanReader?.mode || "vertical").catch((error) => showToast(error.message));
-    return;
-  }
-  if (event.target.id === "manga-chapter-picker") {
-    selectMangaChapter(event.target.value);
     return;
   }
   if (event.target.id === "scan-detail-language" && state.scanDetails) {
@@ -2945,6 +2637,12 @@ document.addEventListener("input", (event) => {
   }
 });
 
+document.addEventListener("wheel", handleScanReaderWheel, { passive: false });
+document.addEventListener("pointerdown", handleScanPanStart);
+document.addEventListener("pointermove", handleScanPanMove);
+document.addEventListener("pointerup", handleScanPanEnd);
+document.addEventListener("pointercancel", handleScanPanEnd);
+
 document.addEventListener("click", (event) => {
   if (qualityMenu && !qualityMenu.classList.contains("hidden")) {
     if (!event.target.closest(".quality-control")) {
@@ -2965,10 +2663,6 @@ async function handleClick(event) {
     return;
   }
 
-  if (handleMangaPageClick(event)) {
-    return;
-  }
-
   if (handleScanPageClick(event)) {
     return;
   }
@@ -2976,16 +2670,6 @@ async function handleClick(event) {
   const nav = event.target.closest("[data-view]");
   if (nav) {
     const view = nav.dataset.view;
-    if (view !== "manga") {
-      await saveMangaProgress(true).catch(() => {});
-      if (appFullscreenActive("manga")) {
-        await exitAppFullscreen();
-      } else if (fullscreenOwner(mangaFullscreenStage())) {
-        await exitFullscreenMode();
-      }
-      clearMangaReaderRuntime();
-      state.mangaReader = null;
-    }
     if (view !== "scans" || state.scanReader) {
       await saveScanProgress(false).catch(() => {});
       if (appFullscreenActive("scan")) {
@@ -2997,7 +2681,6 @@ async function handleClick(event) {
       state.scanReader = null;
     }
     if (view === "home") await loadHome();
-    if (view === "manga") await showMangaView();
     if (view === "scans") await renderScans();
     if (view === "favorites") await renderFavorites();
     if (view === "tracking") await renderTracking();
@@ -3012,61 +2695,6 @@ async function handleClick(event) {
     const [providerId, contentId] = opener.dataset.openContent.split(":");
     devLog("result_opened", { provider: providerId, title: opener.querySelector("h3")?.textContent || "" });
     await openContent(providerId, contentId);
-    return;
-  }
-
-  const mangaOpener = event.target.closest("[data-open-manga]");
-  if (mangaOpener) {
-    await openMangaReader(mangaOpener.dataset.openManga, 0, 0);
-    return;
-  }
-
-  const mangaResume = event.target.closest("[data-resume-manga]");
-  if (mangaResume) {
-    const entry = mangaMetaByUrl(mangaResume.dataset.resumeManga) || {};
-    await openMangaReader(mangaResume.dataset.resumeManga, entry.chapter || 0, entry.page || 0);
-    return;
-  }
-
-  if (event.target.closest("[data-manga-back-library]")) {
-    await saveMangaProgress(true).catch(() => {});
-    if (appFullscreenActive("manga")) {
-      await exitAppFullscreen();
-    } else if (fullscreenOwner(mangaFullscreenStage())) {
-      await exitFullscreenMode();
-    }
-    await showMangaView();
-    return;
-  }
-
-  if (event.target.closest("[data-manga-fullscreen]")) {
-    await enterAppFullscreen("manga");
-    return;
-  }
-
-  const mangaMode = event.target.closest("[data-manga-mode]");
-  if (mangaMode) {
-    setMangaReaderMode(mangaMode.dataset.mangaMode);
-    return;
-  }
-
-  if (event.target.closest("[data-manga-prev-page]")) {
-    moveMangaPage(-1);
-    return;
-  }
-
-  if (event.target.closest("[data-manga-next-page]")) {
-    moveMangaPage(1);
-    return;
-  }
-
-  if (event.target.closest("[data-manga-prev-chapter]")) {
-    moveMangaChapter(-1);
-    return;
-  }
-
-  if (event.target.closest("[data-manga-next-chapter]")) {
-    moveMangaChapter(1);
     return;
   }
 
@@ -3309,11 +2937,25 @@ async function handleClick(event) {
 
 }
 
+async function toggleVideoFullscreen(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const now = Date.now();
+  if (now - state.videoFullscreenToggleAt < VIDEO_FULLSCREEN_TOGGLE_GUARD_MS) return;
+  state.videoFullscreenToggleAt = now;
+  if (appFullscreenActive("video") || fullscreenOwner(video)) {
+    if (fullscreenOwner(video)) {
+      await exitFullscreenMode();
+    }
+    await exitAppFullscreen();
+    return;
+  }
+  await enterAppFullscreen("video");
+}
+
 document.getElementById("player-close").addEventListener("click", closePlayer);
 document.getElementById("mark-watched").addEventListener("click", () => postProgress(true));
-video.addEventListener("dblclick", () => {
-  enterAppFullscreen("video").catch((error) => showToast(error.message));
-});
+video.addEventListener("dblclick", toggleVideoFullscreen);
 video.addEventListener("timeupdate", () => postProgress(false));
 video.addEventListener("volumechange", saveStoredPlayerState);
 video.addEventListener("ended", () => {
@@ -3331,16 +2973,6 @@ document.addEventListener("keydown", (event) => {
   }
   const keyTarget = event.target instanceof Element ? event.target : null;
   const editingText = keyTarget?.closest("input, textarea, select, [contenteditable='true']");
-  if (state.currentView === "manga" && state.mangaReader?.mode === "page" && !editingText) {
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      moveMangaPage(-1);
-    }
-    if (event.key === "ArrowRight") {
-      event.preventDefault();
-      moveMangaPage(1);
-    }
-  }
   if (state.currentView === "scans" && state.scanReader?.mode === "single" && !editingText) {
     if (event.key === "ArrowLeft") {
       event.preventDefault();
@@ -3357,7 +2989,6 @@ document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
 document.addEventListener("MSFullscreenChange", handleFullscreenChange);
 window.addEventListener("beforeunload", () => {
   devLog("window_close", { view: state.currentView, title: state.currentPlayback?.title });
-  saveMangaProgress(true).catch(() => {});
   saveScanProgress(false).catch(() => {});
 });
 

@@ -10,13 +10,18 @@ from ..tracker import tracker
 from .encoding import make_content_key
 
 
+APP_NAME = "AutoFlix"
+APP_ID = "AutoFlix"
+APP_AUTHOR = "PaulExplorer"
+
+
 def _default_download_dir() -> str:
     home = Path.home()
     candidates = [home / "Videos", home / "Movies", home / "Vidéos"]
     for candidate in candidates:
         if candidate.exists():
-            return str(candidate / "AutoFlix")
-    return str(home / "Videos" / "AutoFlix")
+            return str(candidate / APP_ID)
+    return str(home / "Videos" / APP_ID)
 
 
 def _mapping_media_id(value: Any) -> Optional[int]:
@@ -86,7 +91,7 @@ class DesktopStore:
     """JSON-backed state used by the desktop UI."""
 
     def __init__(self, data_file: Optional[Path] = None):
-        data_dir = Path(user_data_dir("AutoFlix", "PaulExplorer"))
+        data_dir = Path(user_data_dir(APP_ID, APP_AUTHOR))
         self.data_file = data_file or data_dir / "desktop.json"
         self._lock = threading.RLock()
         self.data = self._load()

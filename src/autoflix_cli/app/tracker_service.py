@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import diagnostics
 from .downloads import DownloadManager
-from .store import DesktopStore
+from .store import APP_NAME, DesktopStore
 
 
 def notify_native(title: str, body: str = "") -> bool:
@@ -34,7 +34,7 @@ def _notify_windows(title: str, body: str) -> bool:
         f"$nodes.Item(0).AppendChild($xml.CreateTextNode('{safe_title}')) | Out-Null;"
         f"$nodes.Item(1).AppendChild($xml.CreateTextNode('{safe_body}')) | Out-Null;"
         "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml);"
-        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('AutoFlix').Show($toast);"
+        f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{_ps_escape(APP_NAME)}').Show($toast);"
     )
     try:
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)

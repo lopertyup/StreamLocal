@@ -3,10 +3,11 @@ import sys
 from typing import Optional
 
 from . import diagnostics
+from .store import APP_NAME
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_VALUE_NAME = "AutoFlix"
+RUN_VALUE_NAME = APP_NAME
 
 
 def build_autostart_command() -> str:
