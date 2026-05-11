@@ -73,6 +73,10 @@ class FakeScanProvider:
         ]
 
 
+def test_default_scan_registry_only_includes_supported_sources():
+    assert list(ScanService(providers=None).providers) == ["anime_sama", "lelscans", "scan_manga"]
+
+
 def test_scan_api_routes_and_progress(tmp_path):
     store = DesktopStore(tmp_path / "desktop.json")
     scan_service = ScanService(store=store, providers={"fake": FakeScanProvider()})

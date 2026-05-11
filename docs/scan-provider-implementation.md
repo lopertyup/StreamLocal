@@ -129,7 +129,7 @@ Pour un site complexe, isoler les mecanismes specifiques dans le scraper au lieu
 - des exceptions dediees (`<Site>CloudflareError`, `<Site>PaidContentError`) mappees ensuite en `ProviderError`;
 - une fonction de validation stricte des URLs autorisees avant tout proxy;
 - des decodeurs nommes pour les payloads inline/API au lieu de manipuler des chaines dans `get_pages`;
-- des retries limites avec de nouvelles sessions `curl_cffi`/profils `impersonate` quand le blocage depend de la session;
+- des messages explicites quand le site exige Cloudflare, une connexion ou un abonnement; ne pas contourner ces protections;
 - un cache local uniquement pour les donnees reconstructibles, jamais pour des secrets ou donnees utilisateur.
 
 Exemple Scan-Manga:
@@ -258,7 +258,7 @@ Pour un site du niveau de Scan-Manga, appliquer aussi ces regles:
 - conserver les headers navigateur importants (`Origin`, `Referer`, `Accept`, `Accept-Language`, `Sec-Fetch-*`) pour les pages, APIs et images;
 - streamer l'image depuis Flask (`stream_with_context`) et propager `Content-Type`, `Content-Length` si disponible, et un `Cache-Control` raisonnable;
 - transformer les erreurs attendues en messages lisibles: Cloudflare temporaire, chapitre payant, pages indisponibles;
-- si Cloudflare bloque seulement une session de lecture, retenter avec une session neuve et des profils `impersonate` limites, puis utiliser le cache local de pages si une version valide existe;
+- si Cloudflare ou le lecteur exige une session navigateur, declarer clairement la limitation; les cookies/env vars doivent rester une option locale explicite de l'utilisateur, jamais un contournement automatique;
 - refuser tout proxy d'URL hors domaine autorise via `urlparse` (`host == domaine` ou sous-domaine attendu).
 
 Quand les images sont cachees dans le HTML ou un payload obfusque, creer un outil d'enquete plutot que multiplier les essais a la main. Le modele Scan-Manga:
@@ -299,8 +299,8 @@ Commandes de validation:
 
 ```powershell
 node --check src\autoflix_cli\app\static\app.js
-python -m py_compile src\autoflix_cli\desktop.py
-python -m pytest
+uv run python -m py_compile src\autoflix_cli\app\scans.py src\autoflix_cli\app\server.py
+uv run --with pytest python -m pytest
 ```
 
 7. Build `.exe`

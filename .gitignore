@@ -5,6 +5,7 @@ __pycache__/
 
 # Virtual environments and package managers
 .venv/
+.uv-cache/
 venv/
 env/
 .env
@@ -43,7 +44,10 @@ temp/
 desktop-runtime.json
 data/scan_manga_chapter_pages_cache.json
 data/scan_manga_chapter_pages_cache.json.tmp
+data/scan_image_locations.json
+data/scan_image_locations.json.tmp
 data/scan_manga_image_locations.json
+data/scan_manga_image_locations.json.tmp
 
 # Editors and OS files
 .vscode/

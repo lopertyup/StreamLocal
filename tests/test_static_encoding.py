@@ -118,6 +118,15 @@ def test_static_scan_reader_has_fullscreen_controls():
     assert ".scan-reader-stage" in styles
 
 
+def test_static_scan_chapters_with_unknown_page_count_are_clickable():
+    script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "const unavailable = !chapter.id;" in script
+    assert 'return chapters.filter((chapter) => chapter.id);' in script
+    assert "Pages a charger" in script
+    assert "Number(chapter.pages || 0) > 0" not in script
+
+
 def test_static_history_can_delete_entries():
     script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
     styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")

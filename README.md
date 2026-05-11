@@ -9,7 +9,7 @@ Le dépôt public est pensé pour les utilisateurs. Il contient le script de
 création de l'exécutable, mais pas les scripts de maintenance utilisés pour
 pousser les mises à jour.
 
-Version actuelle : `0.6.6` - V6 finalisée le 10/05/2026, avec Scan-Manga.
+Version actuelle : `1.0.0` - version 1.0 prête le 11/05/2026.
 
 ## Installation Rapide
 

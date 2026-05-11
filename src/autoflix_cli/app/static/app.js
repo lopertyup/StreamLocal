@@ -707,13 +707,13 @@ function scanChapterHtml(chapter) {
   const progress = chapter.progress;
   const progressText = progress ? `${Math.round(percent(progress))}%` : "";
   const groups = (chapter.scanlation_groups || []).slice(0, 2).join(", ");
-  const unavailable = Number(chapter.pages || 0) <= 0;
+  const unavailable = !chapter.id;
   return `
     <button class="chapter-button" type="button" data-open-scan-chapter="${escapeHtml(chapter.id)}" data-chapter-number="${escapeHtml(chapter.chapter || "")}" data-chapter-label="${escapeHtml(chapter.title)}" ${unavailable ? "disabled" : ""}>
       <div>
         <strong>${escapeHtml(chapter.title)}</strong>
         <div class="meta-line">
-          ${chapter.pages ? `<span>${escapeHtml(chapter.pages)} pages</span>` : "<span>Pages indisponibles</span>"}
+          ${chapter.pages ? `<span>${escapeHtml(chapter.pages)} pages</span>` : "<span>Pages a charger</span>"}
           ${chapter.language ? `<span>${escapeHtml(chapter.language.toUpperCase())}</span>` : ""}
           ${groups ? `<span>${escapeHtml(groups)}</span>` : ""}
         </div>
@@ -753,7 +753,7 @@ async function openScanChapter(chapterId, pageIndex = 0, mode = null) {
 
 function readableScanChapters() {
   const chapters = state.scanDetails?.chapters || [];
-  return chapters.filter((chapter) => Number(chapter.pages || 0) > 0);
+  return chapters.filter((chapter) => chapter.id);
 }
 
 function currentScanChapterIndex() {
